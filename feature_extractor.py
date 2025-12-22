@@ -118,13 +118,22 @@ class QwenVLFeatureExtractor:
         if self.use_flash_attention:
             model_kwargs["attn_implementation"] = "flash_attention_2"
         else:
-            # Use eager attention (standard PyTorch) instead of auto-detecting flash
-            model_kwargs["attn_implementation"] = "eager"
+            # Use SDPA (scaled dot-product attention) - works on all GPUs
+            model_kwargs["attn_implementation"] = "sdpa"
         
-        self.model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
-            self.model_name,
-            **model_kwargs
-        )
+        try:
+            self.model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
+                self.model_name,
+                **model_kwargs
+            )
+        except ImportError:
+            # If sdpa fails, try eager
+            print("SDPA unavailable, falling back to eager attention...")
+            model_kwargs["attn_implementation"] = "eager"
+            self.model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
+                self.model_name,
+                **model_kwargs
+            )
         self.model.eval()
         
         # Load processor
