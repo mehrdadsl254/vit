@@ -126,24 +126,39 @@ def run_decoder_experiment(
     layers = [f"decoder_layer_{i}" for i in config.decoder_layers 
               if f"decoder_layer_{i}" in features['decoder']]
     
-    # Create visualization
-    print("\nCreating visualization...")
-    fig = create_similarity_figure(
-        image, sim_grids, layers, config.selected_patches, config,
-        title=f"Decoder (LLM) Patch Similarity - {image_name}"
-    )
+    # Create visualizations - split into groups of 3 layers for clarity
+    print("\nCreating visualizations...")
+    layers_per_figure = 3
+    fig_paths = []
     
-    # Save figure
-    fig_path = os.path.join(output_dir, "figures", f"{image_name}_decoder_similarity.png")
-    save_figure(fig, fig_path, dpi=150)
+    for fig_idx, start_idx in enumerate(range(0, len(layers), layers_per_figure)):
+        layer_group = layers[start_idx:start_idx + layers_per_figure]
+        
+        # Get layer numbers for title
+        layer_nums = [l.replace('decoder_layer_', '') for l in layer_group]
+        group_label = f"L{layer_nums[0]}-L{layer_nums[-1]}"
+        
+        fig = create_similarity_figure(
+            image, sim_grids, layer_group, config.selected_patches, config,
+            title=f"Decoder Layers {group_label} - {image_name}",
+            figsize_per_cell=(3.0, 3.0)  # Larger cells for clarity
+        )
+        
+        # Save figure
+        fig_path = os.path.join(output_dir, "figures", f"{image_name}_decoder_{group_label}.png")
+        save_figure(fig, fig_path, dpi=150)
+        fig_paths.append(fig_path)
+        print(f"  Saved: {fig_path}")
     
     print("\n" + "=" * 50)
     print("DECODER EXPERIMENT COMPLETE")
     print("=" * 50)
     print(f"Features: {features_path}")
-    print(f"Figure: {fig_path}")
+    print(f"Figures ({len(fig_paths)} files):")
+    for p in fig_paths:
+        print(f"  - {p}")
     
-    return fig_path
+    return fig_paths
 
 
 def main():
