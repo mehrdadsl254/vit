@@ -26,7 +26,7 @@ def run_encoder_experiment(
     color: str = None,
     output_dir: str = "outputs/encoder",
     save_features_only: bool = False,
-    use_flash_attention: bool = True,
+    use_flash_attention: bool = False,  # Disabled by default
 ):
     """
     Run the encoder experiment.

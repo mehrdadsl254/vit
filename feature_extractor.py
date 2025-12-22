@@ -86,7 +86,7 @@ class QwenVLFeatureExtractor:
         model_name: str = "Qwen/Qwen2.5-VL-7B-Instruct",
         device: str = "auto",
         dtype: torch.dtype = torch.bfloat16,
-        use_flash_attention: bool = True
+        use_flash_attention: bool = False  # Disabled by default (requires CUDA toolkit to build)
     ):
         self.model_name = model_name
         self.device = device
