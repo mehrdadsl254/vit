@@ -101,6 +101,35 @@ def analyze_similarity_patterns():
     print("If all layers show identical embeddings, Qwen VL uses RoPE")
     print("which only affects attention computation, not output embeddings.")
     print("For a uniform image, patches remain identical regardless of position.")
+    
+    # Demonstrate the numerical artifact issue
+    print("\n" + "=" * 60)
+    print("NUMERICAL ARTIFACT DEMONSTRATION")
+    print("=" * 60)
+    
+    # Use last layer features
+    layer_features = features['encoder']['encoder_layer_31']
+    if layer_features.dim() == 3:
+        layer_features = layer_features[0]
+    
+    # Show what happens with mean-centering on identical vectors
+    mean = layer_features.float().mean(dim=0, keepdim=True)
+    centered = layer_features.float() - mean
+    
+    print(f"Original embedding norm (patch 0): {layer_features[0].float().norm():.6f}")
+    print(f"Mean embedding norm: {mean.norm():.6f}")
+    print(f"Centered embedding norm (patch 0): {centered[0].norm():.10f}")
+    print(f"Centered embedding norm (patch 500): {centered[500].norm():.10f}")
+    
+    if centered[0].norm() < 1e-6:
+        print("\n⚠️ PROBLEM: Centered embeddings are near-zero!")
+        print("When normalizing near-zero vectors, we get NUMERICAL NOISE!")
+        
+        # Normalize and show the noise
+        normalized = F.normalize(centered, p=2, dim=-1)
+        sim = torch.mv(normalized, normalized[center_idx])
+        print(f"\nAfter normalization, similarity range: [{sim.min():.6f}, {sim.max():.6f}]")
+        print("These 'variations' are numerical artifacts, NOT positional information!")
 
 
 if __name__ == "__main__":
