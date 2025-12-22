@@ -398,7 +398,8 @@ def save_features(features: Dict, output_path: str):
     for component in ['encoder', 'decoder']:
         if component in features:
             for layer_name, tensor in features[component].items():
-                save_dict[f"{component}/{layer_name}"] = tensor.numpy()
+                # Convert bfloat16 to float32 (numpy doesn't support bfloat16)
+                save_dict[f"{component}/{layer_name}"] = tensor.float().numpy()
     
     if 'vision_token_indices' in features and features['vision_token_indices'] is not None:
         save_dict['vision_token_indices'] = features['vision_token_indices'].numpy()
