@@ -36,6 +36,12 @@ def compute_patch_similarity(
     """
     Compute cosine similarity between a selected patch and all other patches.
     
+    Steps:
+    1. Compute mean embedding across all patches
+    2. Subtract mean from each patch (centering)
+    3. L2 normalize the centered embeddings
+    4. Compute cosine similarity
+    
     Args:
         features: Patch features [num_patches, hidden_dim]
         selected_patch_idx: Index of the selected patch
@@ -43,13 +49,21 @@ def compute_patch_similarity(
     Returns:
         Similarity scores [num_patches]
     """
-    # Normalize features
-    features_normalized = F.normalize(features.float(), p=2, dim=-1)
+    features = features.float()
     
-    # Get selected patch features
+    # Step 1: Compute mean embedding across all patches
+    mean_embedding = features.mean(dim=0, keepdim=True)
+    
+    # Step 2: Subtract mean from each patch (centering)
+    centered_features = features - mean_embedding
+    
+    # Step 3: L2 normalize the centered embeddings
+    features_normalized = F.normalize(centered_features, p=2, dim=-1)
+    
+    # Step 4: Get selected patch features (now centered and normalized)
     selected_features = features_normalized[selected_patch_idx]
     
-    # Compute cosine similarity with all patches
+    # Step 5: Compute cosine similarity with all patches
     similarities = torch.mv(features_normalized, selected_features)
     
     return similarities
