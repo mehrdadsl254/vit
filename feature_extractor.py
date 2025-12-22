@@ -113,8 +113,13 @@ class QwenVLFeatureExtractor:
             "torch_dtype": self.dtype,
             "device_map": self.device,
         }
+        
+        # Explicitly set attention implementation
         if self.use_flash_attention:
             model_kwargs["attn_implementation"] = "flash_attention_2"
+        else:
+            # Use eager attention (standard PyTorch) instead of auto-detecting flash
+            model_kwargs["attn_implementation"] = "eager"
         
         self.model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
             self.model_name,
