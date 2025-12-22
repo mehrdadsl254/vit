@@ -1,0 +1,19 @@
+name: vit-similarity
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  - pytorch>=2.0
+  - pytorch-cuda=12.1
+  - pip
+  - pip:
+    - transformers>=4.45.0
+    - accelerate>=0.25.0
+    - qwen-vl-utils
+    - Pillow>=9.0.0
+    - matplotlib>=3.5.0
+    - numpy>=1.21.0
+    - flash-attn>=2.0.0
