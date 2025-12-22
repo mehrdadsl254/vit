@@ -221,22 +221,27 @@ def create_single_layer_figure(
     selected_patches: List[PatchPosition],
     config: ExperimentConfig,
     title: str = None,
-    figsize: Tuple[float, float] = (20, 4),
+    figsize: Tuple[float, float] = (24, 5),
     decimal_places: int = 4,
 ) -> plt.Figure:
     """
-    Create a single-layer figure with one row of selected patches.
-    Much larger and clearer than the multi-layer version.
+    Create a single-layer figure showing PURE HEATMAPS.
+    
+    Each subplot shows the cosine similarity heatmap for one selected patch.
+    - Range: -1 to 1 (proper cosine similarity range)
+    - No underlying image - just the heatmap
+    - No numbers overlaid - just color intensity
+    - Red box marks the selected patch position
     
     Args:
-        image: Input image
+        image: Input image (used only for dimensions)
         similarities: patch_name -> similarity grid for this layer
         layer_name: Name of the layer
         selected_patches: List of selected patch positions
         config: Experiment configuration
         title: Figure title (auto-generated if None)
         figsize: Figure size (width, height)
-        decimal_places: Number of decimal places to show
+        decimal_places: Not used (kept for compatibility)
     
     Returns:
         Matplotlib figure
@@ -248,8 +253,9 @@ def create_single_layer_figure(
     if n_cols == 1:
         axes = [axes]
     
-    # Larger font for bigger images
-    fontsize = max(6, 14 - config.num_patches_per_side // 3)
+    # Use RdBu colormap: Red = negative, White = 0, Blue = positive
+    # Or RdYlGn: Red = negative, Yellow = 0, Green = positive
+    cmap = 'RdYlGn'  # Red(-1) -> Yellow(0) -> Green(+1)
     
     for col_idx, patch_pos in enumerate(selected_patches):
         ax = axes[col_idx]
@@ -257,34 +263,48 @@ def create_single_layer_figure(
         if patch_pos.name in similarities:
             sim_grid = similarities[patch_pos.name]
             
-            # Ensure it's reshaped to grid
+            # Ensure it's a 2D grid
             if sim_grid.ndim == 1:
                 sim_grid = reshape_similarities_to_grid(
                     sim_grid if not hasattr(sim_grid, 'numpy') else sim_grid,
                     config.num_patches_per_side
                 )
             
-            patch_idx = config.get_patch_index(patch_pos)
+            # Show pure heatmap with proper -1 to 1 range
+            im = ax.imshow(sim_grid, cmap=cmap, vmin=-1, vmax=1)
             
-            create_patch_overlay(
-                image, sim_grid, patch_idx,
-                config.num_patches_per_side, ax,
-                show_values=True,
-                fontsize=fontsize,
-                decimal_places=decimal_places
+            # Mark the selected patch with a red border
+            patch_idx = config.get_patch_index(patch_pos)
+            selected_row = patch_idx // config.num_patches_per_side
+            selected_col = patch_idx % config.num_patches_per_side
+            
+            rect = mpatches.Rectangle(
+                (selected_col - 0.5, selected_row - 0.5), 1, 1,
+                linewidth=3,
+                edgecolor='red',
+                facecolor='none',
+                zorder=10
             )
+            ax.add_patch(rect)
+            
+            # Add min/max annotation
+            ax.text(0.02, 0.98, f'min: {sim_grid.min():.4f}\nmax: {sim_grid.max():.4f}',
+                    transform=ax.transAxes, fontsize=8, verticalalignment='top',
+                    bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+            
         else:
             ax.text(0.5, 0.5, 'No data', ha='center', va='center')
-            ax.axis('off')
         
         ax.set_title(patch_pos.name, fontsize=14, fontweight='bold')
+        ax.axis('off')
     
-    # Add colorbar
-    cax = fig.add_axes([0.92, 0.15, 0.01, 0.7])
-    sm = ScalarMappable(cmap='RdYlGn', norm=Normalize(0, 1))
+    # Add colorbar showing -1 to 1 range
+    cax = fig.add_axes([0.92, 0.15, 0.015, 0.7])
+    sm = ScalarMappable(cmap=cmap, norm=Normalize(-1, 1))
     sm.set_array([])
     cbar = fig.colorbar(sm, cax=cax)
     cbar.set_label('Cosine Similarity', fontsize=12)
+    cbar.set_ticks([-1, -0.5, 0, 0.5, 1])
     
     # Add title
     if title is None:
