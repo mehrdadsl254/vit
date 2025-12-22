@@ -29,7 +29,8 @@ def create_patch_overlay(
     show_values: bool = True,
     cmap: str = 'RdYlGn',
     alpha: float = 0.6,
-    fontsize: int = 6
+    fontsize: int = 6,
+    decimal_places: int = 2
 ):
     """
     Create a single panel showing patches with similarity overlay.
@@ -96,9 +97,10 @@ def create_patch_overlay(
             # Add similarity value text
             if show_values and not is_selected:
                 text_color = 'white' if sim_value < 0.5 else 'black'
+                fmt = f'{{:.{decimal_places}f}}'
                 ax.text(
                     x + patch_w / 2, y + patch_h / 2,
-                    f'{sim_value:.2f}',
+                    fmt.format(sim_value),
                     ha='center', va='center',
                     fontsize=fontsize,
                     color=text_color,
@@ -210,6 +212,89 @@ def save_figure(fig: plt.Figure, output_path: str, dpi: int = 150):
     fig.savefig(output_path, dpi=dpi, bbox_inches='tight', facecolor='white')
     print(f"Figure saved to: {output_path}")
     plt.close(fig)
+
+
+def create_single_layer_figure(
+    image: Image.Image,
+    similarities: Dict[str, np.ndarray],  # patch_name -> similarity grid
+    layer_name: str,
+    selected_patches: List[PatchPosition],
+    config: ExperimentConfig,
+    title: str = None,
+    figsize: Tuple[float, float] = (20, 4),
+    decimal_places: int = 4,
+) -> plt.Figure:
+    """
+    Create a single-layer figure with one row of selected patches.
+    Much larger and clearer than the multi-layer version.
+    
+    Args:
+        image: Input image
+        similarities: patch_name -> similarity grid for this layer
+        layer_name: Name of the layer
+        selected_patches: List of selected patch positions
+        config: Experiment configuration
+        title: Figure title (auto-generated if None)
+        figsize: Figure size (width, height)
+        decimal_places: Number of decimal places to show
+    
+    Returns:
+        Matplotlib figure
+    """
+    n_cols = len(selected_patches)
+    
+    fig, axes = plt.subplots(1, n_cols, figsize=figsize)
+    
+    if n_cols == 1:
+        axes = [axes]
+    
+    # Larger font for bigger images
+    fontsize = max(6, 14 - config.num_patches_per_side // 3)
+    
+    for col_idx, patch_pos in enumerate(selected_patches):
+        ax = axes[col_idx]
+        
+        if patch_pos.name in similarities:
+            sim_grid = similarities[patch_pos.name]
+            
+            # Ensure it's reshaped to grid
+            if sim_grid.ndim == 1:
+                sim_grid = reshape_similarities_to_grid(
+                    sim_grid if not hasattr(sim_grid, 'numpy') else sim_grid,
+                    config.num_patches_per_side
+                )
+            
+            patch_idx = config.get_patch_index(patch_pos)
+            
+            create_patch_overlay(
+                image, sim_grid, patch_idx,
+                config.num_patches_per_side, ax,
+                show_values=True,
+                fontsize=fontsize,
+                decimal_places=decimal_places
+            )
+        else:
+            ax.text(0.5, 0.5, 'No data', ha='center', va='center')
+            ax.axis('off')
+        
+        ax.set_title(patch_pos.name, fontsize=14, fontweight='bold')
+    
+    # Add colorbar
+    cax = fig.add_axes([0.92, 0.15, 0.01, 0.7])
+    sm = ScalarMappable(cmap='RdYlGn', norm=Normalize(0, 1))
+    sm.set_array([])
+    cbar = fig.colorbar(sm, cax=cax)
+    cbar.set_label('Cosine Similarity', fontsize=12)
+    
+    # Add title
+    if title is None:
+        layer_num = layer_name.replace('encoder_layer_', 'E').replace('decoder_layer_', 'D')
+        title = f"Layer {layer_num} Patch Similarity"
+    fig.suptitle(title, fontsize=16, fontweight='bold', y=1.02)
+    
+    plt.tight_layout(rect=[0, 0, 0.9, 0.98])
+    
+    return fig
 
 
 def create_comparison_figure(

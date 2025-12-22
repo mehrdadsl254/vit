@@ -126,26 +126,29 @@ def run_decoder_experiment(
     layers = [f"decoder_layer_{i}" for i in config.decoder_layers 
               if f"decoder_layer_{i}" in features['decoder']]
     
-    # Create visualizations - split into groups of 3 layers for clarity
-    print("\nCreating visualizations...")
-    layers_per_figure = 3
+    # Create ONE figure per layer for maximum clarity
+    print("\nCreating visualizations (one per layer)...")
     fig_paths = []
     
-    for fig_idx, start_idx in enumerate(range(0, len(layers), layers_per_figure)):
-        layer_group = layers[start_idx:start_idx + layers_per_figure]
+    # Import single layer figure creator
+    from visualize import create_single_layer_figure
+    
+    for layer_name in layers:
+        layer_num = layer_name.replace('decoder_layer_', '')
         
-        # Get layer numbers for title
-        layer_nums = [l.replace('decoder_layer_', '') for l in layer_group]
-        group_label = f"L{layer_nums[0]}-L{layer_nums[-1]}"
-        
-        fig = create_similarity_figure(
-            image, sim_grids, layer_group, config.selected_patches, config,
-            title=f"Decoder Layers {group_label} - {image_name}",
-            figsize_per_cell=(3.0, 3.0)  # Larger cells for clarity
+        fig = create_single_layer_figure(
+            image, 
+            sim_grids[layer_name], 
+            layer_name,
+            config.selected_patches, 
+            config,
+            title=f"Decoder Layer {layer_num} - {image_name}",
+            figsize=(24, 5),  # Wide figure for 6 patches
+            decimal_places=4  # Show 4 decimal places
         )
         
         # Save figure
-        fig_path = os.path.join(output_dir, "figures", f"{image_name}_decoder_{group_label}.png")
+        fig_path = os.path.join(output_dir, "figures", f"{image_name}_decoder_L{layer_num}.png")
         save_figure(fig, fig_path, dpi=150)
         fig_paths.append(fig_path)
         print(f"  Saved: {fig_path}")
