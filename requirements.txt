@@ -1,0 +1,21 @@
+# Qwen 2.5 VL Patch Similarity Experiment
+
+## Requirements
+
+# Core dependencies
+torch>=2.0.0
+transformers>=4.45.0  # Must have Qwen2.5-VL support
+accelerate>=0.25.0
+
+# Qwen VL utilities
+qwen-vl-utils
+
+# Image processing
+Pillow>=9.0.0
+
+# Visualization
+matplotlib>=3.5.0
+numpy>=1.21.0
+
+# For flash attention (optional but recommended)
+flash-attn>=2.0.0
