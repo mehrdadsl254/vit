@@ -216,11 +216,28 @@ class QwenVLFeatureExtractor(BaseFeatureExtractor):
         # Qwen 2.5 VL structure: model.model.layers
         if hasattr(self.model, 'model'):
             llm = self.model.model
+            
+            # Check if layers is directly accessible
             if hasattr(llm, 'layers'):
                 for i, layer in enumerate(llm.layers):
                     layers.append((i, layer))
                 print(f"Found {len(layers)} decoder layers in model.model.layers")
                 return layers
+            
+            # Check for embed_tokens and layers pattern (common in LLM)
+            # Try to find layers in children
+            for name, child in llm.named_children():
+                if 'layers' in name.lower() or name == 'layers':
+                    if hasattr(child, '__len__'):
+                        for i, layer in enumerate(child):
+                            layers.append((i, layer))
+                        print(f"Found {len(layers)} decoder layers in model.model.{name}")
+                        return layers
+            
+            # Print structure of model.model for debugging
+            print(f"model.model structure:")
+            for name, _ in llm.named_children():
+                print(f"  - {name}")
         
         # Try alternative: model.language_model.model.layers
         if hasattr(self.model, 'language_model'):
