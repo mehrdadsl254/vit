@@ -176,11 +176,6 @@ def run_decoder_experiment(
             config.selected_patches, 
             decoder_config,
             title=f"Decoder Layer {layer_num} ({title_suffix}) - {image_name}",
-            sim_grids[layer_name], 
-            layer_name,
-            config.selected_patches, 
-            config,
-            title=f"Decoder Layer {layer_num} ({title_suffix}) - {image_name}",
             figsize=(24, 5),
             decimal_places=4
         )
