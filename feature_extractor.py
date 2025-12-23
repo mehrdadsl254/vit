@@ -207,10 +207,36 @@ class QwenVLFeatureExtractor(BaseFeatureExtractor):
         return layers
     
     def get_decoder_layers(self) -> List[Tuple[int, nn.Module]]:
+        """Get decoder (LLM) layers from the model"""
         layers = []
-        if hasattr(self.model, 'model') and hasattr(self.model.model, 'layers'):
-            for i, layer in enumerate(self.model.model.layers):
-                layers.append((i, layer))
+        
+        if not self.model:
+            raise RuntimeError("Model not loaded. Call load_model() first.")
+        
+        # Qwen 2.5 VL structure: model.model.layers
+        if hasattr(self.model, 'model'):
+            llm = self.model.model
+            if hasattr(llm, 'layers'):
+                for i, layer in enumerate(llm.layers):
+                    layers.append((i, layer))
+                print(f"Found {len(layers)} decoder layers in model.model.layers")
+                return layers
+        
+        # Try alternative: model.language_model.model.layers
+        if hasattr(self.model, 'language_model'):
+            lm = self.model.language_model
+            if hasattr(lm, 'model') and hasattr(lm.model, 'layers'):
+                for i, layer in enumerate(lm.model.layers):
+                    layers.append((i, layer))
+                print(f"Found {len(layers)} decoder layers in language_model.model.layers")
+                return layers
+        
+        # Debug: print model structure if no layers found
+        if not layers:
+            print("WARNING: No decoder layers found. Model structure:")
+            for name, _ in self.model.named_children():
+                print(f"  - {name}")
+        
         return layers
     
     def prepare_inputs(self, image: Image.Image, prompt: str = "Describe this image."):
