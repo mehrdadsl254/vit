@@ -2,11 +2,10 @@
 Decoder (LLM) Patch Similarity Experiment
 
 Analyzes cosine similarity between vision token patches at different LLM decoder layers.
-Supports multiple VLM models.
 
 Usage:
-    python run_decoder_experiment.py --model qwen --color green
-    python run_decoder_experiment.py --model llava --image test_images/test_scene.png
+    python run_decoder_experiment.py --model qwen --noisy --noise-level 0.001
+    python run_decoder_experiment.py --model qwen --noisy --centered
 """
 
 import argparse
@@ -15,7 +14,7 @@ import torch
 from PIL import Image
 
 from config import ExperimentConfig, ModelType, get_model_type
-from generate_image import create_solid_color_image
+from generate_image import create_solid_color_image, create_noisy_uniform_image
 from feature_extractor import get_feature_extractor, save_features
 from similarity import SimilarityAnalyzer, reshape_similarities_to_grid
 from visualize import create_single_layer_figure, save_figure
@@ -27,6 +26,9 @@ def run_decoder_experiment(
     color: str = None,
     output_dir: str = None,
     save_features_only: bool = False,
+    use_noisy: bool = False,
+    noise_level: float = 0.001,
+    use_centering: bool = False,
 ):
     """Run the decoder experiment."""
     config = ExperimentConfig(model_type=model_type)
@@ -50,11 +52,20 @@ def run_decoder_experiment(
             'white': (255, 255, 255), 'gray': (128, 128, 128),
         }
         rgb = colors.get(color.lower(), (0, 255, 0))
-        image = create_solid_color_image(rgb, config.image_size)
-        image_name = f"{color}_surface"
+        
+        if use_noisy:
+            image = create_noisy_uniform_image(rgb, config.image_size, config.patch_size, noise_level)
+            image_name = f"{color}_noisy_{noise_level}"
+        else:
+            image = create_solid_color_image(rgb, config.image_size)
+            image_name = f"{color}_surface"
     else:
         image = create_solid_color_image((0, 255, 0), config.image_size)
         image_name = "green_surface"
+    
+    # Add centering info to name
+    if use_centering:
+        image_name += "_centered"
     
     # Save input image
     image_save_path = os.path.join(output_dir, f"{image_name}.png")
@@ -65,7 +76,8 @@ def run_decoder_experiment(
     print(f"DECODER EXPERIMENT - {model_type.value.upper()}")
     print("=" * 50)
     print(f"Model: {config.model_name}")
-    print(f"Positional Encoding: {config.positional_encoding}")
+    print(f"Use noisy image: {use_noisy} (noise_level={noise_level})")
+    print(f"Use mean-centering: {use_centering}")
     
     # Get feature extractor
     extractor = get_feature_extractor(model_type)
@@ -88,7 +100,7 @@ def run_decoder_experiment(
     
     # Compute similarities
     print("\nComputing similarities...")
-    analyzer = SimilarityAnalyzer(config)
+    analyzer = SimilarityAnalyzer(config, use_centering=use_centering)
     
     vision_indices = features.get('vision_token_indices')
     similarities = analyzer.analyze_decoder(features['decoder'], vision_indices)
@@ -113,13 +125,14 @@ def run_decoder_experiment(
     for layer_name in layers:
         layer_num = layer_name.replace('decoder_layer_', '')
         
+        title_suffix = "centered" if use_centering else "raw"
         fig = create_single_layer_figure(
             image, 
             sim_grids[layer_name], 
             layer_name,
             config.selected_patches, 
             config,
-            title=f"Decoder Layer {layer_num} ({model_type.value}) - {image_name}",
+            title=f"Decoder Layer {layer_num} ({title_suffix}) - {image_name}",
             figsize=(24, 5),
             decimal_places=4
         )
@@ -144,11 +157,17 @@ def main():
                         help="Model to use: 'qwen' or 'llava'")
     parser.add_argument("--image", type=str, help="Path to input image")
     parser.add_argument("--color", type=str, default="green",
-                        help="Color for solid image (green, red, blue, etc.)")
+                        help="Color for solid image")
     parser.add_argument("--output", type=str, default=None,
                         help="Output directory")
     parser.add_argument("--features-only", action="store_true",
                         help="Only save features, skip visualization")
+    parser.add_argument("--noisy", action="store_true",
+                        help="Add subtle per-patch noise")
+    parser.add_argument("--noise-level", type=float, default=0.001,
+                        help="Noise intensity (default 0.001 = 0.1%)")
+    parser.add_argument("--centered", action="store_true",
+                        help="Subtract mean before computing similarity")
     
     args = parser.parse_args()
     
@@ -160,6 +179,9 @@ def main():
         color=args.color,
         output_dir=args.output,
         save_features_only=args.features_only,
+        use_noisy=args.noisy,
+        noise_level=args.noise_level,
+        use_centering=args.centered,
     )
 
 
