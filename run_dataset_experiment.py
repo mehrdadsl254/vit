@@ -1,12 +1,15 @@
 """
 Multi-Image Dataset Similarity Experiment
 
-Generates a dataset of images with random geometric objects,
-computes z-scored patch embeddings, and averages similarity across images.
+Generates/loads a dataset of images, computes z-scored patch embeddings,
+and averages similarity across images.
 
 Usage:
+    # Synthetic geometric shapes
     python run_dataset_experiment.py --n-images 64 --n-objects 20 --encoder
-    python run_dataset_experiment.py --n-images 64 --n-objects 20 --decoder
+    
+    # COCO dataset
+    python run_dataset_experiment.py --coco --coco-path /path/to/coco/val2017 --n-images 1000 --encoder
 """
 
 import argparse
@@ -17,6 +20,8 @@ from PIL import Image
 from typing import List, Dict, Optional
 from tqdm import tqdm
 import math
+import glob
+import random
 
 from config import ExperimentConfig, ModelType, get_model_type, PatchPosition
 from dataset_generator import generate_dataset
@@ -35,6 +40,60 @@ SELECTED_PATCHES = [
     PatchPosition("BottomLeft", 0.1, 0.9),
     PatchPosition("BottomRight", 0.9, 0.9),
 ]
+
+
+def load_coco_images(
+    coco_path: str,
+    n_images: int,
+    target_size: tuple = (448, 448),
+    seed: int = 42,
+) -> List[Image.Image]:
+    """
+    Load images from COCO dataset directory.
+    
+    Args:
+        coco_path: Path to COCO images directory (e.g., val2017)
+        n_images: Number of images to load
+        target_size: Resize all images to this size for consistent patches
+        seed: Random seed for reproducible selection
+        
+    Returns:
+        List of PIL Images, all resized to target_size
+    """
+    print(f"Loading COCO images from: {coco_path}")
+    
+    # Find all image files
+    image_extensions = ['*.jpg', '*.jpeg', '*.png', '*.JPEG', '*.JPG']
+    image_files = []
+    for ext in image_extensions:
+        image_files.extend(glob.glob(os.path.join(coco_path, ext)))
+    
+    if not image_files:
+        raise ValueError(f"No images found in {coco_path}")
+    
+    print(f"Found {len(image_files)} images")
+    
+    # Random sample
+    random.seed(seed)
+    if len(image_files) > n_images:
+        image_files = random.sample(image_files, n_images)
+    else:
+        print(f"Warning: Only {len(image_files)} images available, using all")
+    
+    # Load and resize images
+    images = []
+    for img_path in tqdm(image_files, desc="Loading images"):
+        try:
+            img = Image.open(img_path).convert('RGB')
+            # Resize to target size (maintains consistent patch count)
+            img = img.resize(target_size, Image.Resampling.LANCZOS)
+            images.append(img)
+        except Exception as e:
+            print(f"Error loading {img_path}: {e}")
+            continue
+    
+    print(f"Loaded {len(images)} images, resized to {target_size}")
+    return images
 
 
 def compute_zscore_similarity(
@@ -78,8 +137,6 @@ def get_patch_index(pos: PatchPosition, n_patches: int) -> int:
 def run_encoder_dataset_experiment(
     model_type: ModelType,
     n_images: int,
-    n_objects: int,
-    background_color: tuple,
     output_dir: str,
     layers: List[int],
     images: List[Image.Image],
@@ -115,8 +172,6 @@ def run_encoder_dataset_experiment(
 def run_decoder_dataset_experiment(
     model_type: ModelType,
     n_images: int,
-    n_objects: int,
-    background_color: tuple,
     output_dir: str,
     layers: List[int],
     images: List[Image.Image],
@@ -209,7 +264,7 @@ def compute_and_visualize(
                 std_grid = np.std(grids, axis=0)
                 results[layer_name][patch_pos.name] = {'mean': avg_grid, 'std': std_grid}
     
-    # Visualize results
+    # Visualize results - using 0 to 1 range
     print(f"\nCreating {part_name} visualizations...")
     
     for layer_name in results.keys():
@@ -231,7 +286,12 @@ def compute_and_visualize(
                 
             data = results[layer_name][patch_pos.name]
             
-            im = axes[ax_idx].imshow(data['mean'], cmap='RdYlGn', vmin=-1, vmax=1)
+            # Use 0 to 1 range (cosine similarity is already in [-1, 1], shift to [0, 1])
+            # For z-scored features, values can be outside [-1, 1], so we clip
+            display_grid = (data['mean'] + 1) / 2  # Map [-1, 1] to [0, 1]
+            display_grid = np.clip(display_grid, 0, 1)
+            
+            im = axes[ax_idx].imshow(display_grid, cmap='RdYlGn', vmin=0, vmax=1)
             axes[ax_idx].set_title(f"{patch_pos.name}")
             
             # Mark selected patch
@@ -240,14 +300,14 @@ def compute_and_visualize(
             col = patch_idx % n_patches
             axes[ax_idx].plot(col, row, 'ro', markersize=8, markeredgecolor='black', markeredgewidth=2)
             
-            # Add min/max annotation
+            # Add min/max annotation (original values)
             axes[ax_idx].text(0.02, 0.98, f"min: {data['mean'].min():.3f}\nmax: {data['mean'].max():.3f}",
                         transform=axes[ax_idx].transAxes, verticalalignment='top',
                         fontsize=8, bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
             ax_idx += 1
         
-        # Add colorbar
-        plt.colorbar(im, ax=axes, label="Avg Cosine Similarity", shrink=0.8)
+        # Add colorbar with 0-1 range
+        plt.colorbar(im, ax=axes, label="Similarity (0-1)", shrink=0.8)
         
         fig.suptitle(f"{part_name.upper()} Layer {layer_num} - Average Similarity (n={n_images})", fontsize=14)
         plt.tight_layout()
@@ -315,38 +375,46 @@ def run_dataset_experiment(
     decoder_layers: List[int] = None,
     run_encoder: bool = True,
     run_decoder: bool = False,
+    use_coco: bool = False,
+    coco_path: str = None,
 ):
     """Run the dataset similarity experiment"""
     
     config = ExperimentConfig(model_type=model_type)
     
     if output_dir is None:
-        output_dir = f"outputs/dataset_{model_type.value}"
+        dataset_type = "coco" if use_coco else "synthetic"
+        output_dir = f"outputs/dataset_{dataset_type}_{model_type.value}"
     
     os.makedirs(output_dir, exist_ok=True)
-    os.makedirs(os.path.join(output_dir, "images"), exist_ok=True)
     os.makedirs(os.path.join(output_dir, "figures"), exist_ok=True)
     
     print("=" * 60)
     print("DATASET SIMILARITY EXPERIMENT")
     print("=" * 60)
     print(f"Model: {config.model_name}")
+    print(f"Dataset: {'COCO' if use_coco else 'Synthetic geometric'}")
     print(f"Number of images: {n_images}")
-    print(f"Objects per image: {n_objects}")
-    print(f"Background color: {background_color}")
     print(f"Run encoder: {run_encoder}")
     print(f"Run decoder: {run_decoder}")
     print(f"Selected patches: {[p.name for p in SELECTED_PATCHES]}")
     
-    # Generate dataset
-    print("\n1. Generating dataset...")
-    images = generate_dataset(
-        n_images=n_images,
-        image_size=config.image_size,
-        n_objects=n_objects,
-        background_color=background_color,
-        output_dir=os.path.join(output_dir, "images"),
-    )
+    # Load/generate dataset
+    print("\n1. Loading dataset...")
+    
+    if use_coco:
+        if not coco_path or not os.path.exists(coco_path):
+            raise ValueError(f"COCO path not found: {coco_path}")
+        images = load_coco_images(coco_path, n_images, target_size=config.image_size)
+    else:
+        os.makedirs(os.path.join(output_dir, "images"), exist_ok=True)
+        images = generate_dataset(
+            n_images=n_images,
+            image_size=config.image_size,
+            n_objects=n_objects,
+            background_color=background_color,
+            output_dir=os.path.join(output_dir, "images"),
+        )
     
     # Get feature extractor
     print("\n2. Loading model...")
@@ -359,8 +427,7 @@ def run_dataset_experiment(
         if encoder_layers is None:
             encoder_layers = [1, 5, 15, 31]
         results['encoder'] = run_encoder_dataset_experiment(
-            model_type, n_images, n_objects, background_color,
-            output_dir, encoder_layers, images, extractor, config
+            model_type, n_images, output_dir, encoder_layers, images, extractor, config
         )
     
     # Run decoder experiment
@@ -368,8 +435,7 @@ def run_dataset_experiment(
         if decoder_layers is None:
             decoder_layers = [1, 5, 10, 15, 20, 27]
         results['decoder'] = run_decoder_dataset_experiment(
-            model_type, n_images, n_objects, background_color,
-            output_dir, decoder_layers, images, extractor, config
+            model_type, n_images, output_dir, decoder_layers, images, extractor, config
         )
     
     print("\n" + "=" * 60)
@@ -383,9 +449,9 @@ def main():
     parser = argparse.ArgumentParser(description="Run dataset similarity experiment")
     parser.add_argument("--model", type=str, default="qwen", help="Model: 'qwen' or 'llava'")
     parser.add_argument("--n-images", type=int, default=64, help="Number of images")
-    parser.add_argument("--n-objects", type=int, default=20, help="Objects per image")
+    parser.add_argument("--n-objects", type=int, default=20, help="Objects per image (synthetic only)")
     parser.add_argument("--background", type=str, default="blue", 
-                        help="Background color: blue, green, red, etc.")
+                        help="Background color (synthetic only)")
     parser.add_argument("--output", type=str, default=None, help="Output directory")
     parser.add_argument("--encoder-layers", type=str, default="1,5,15,31",
                         help="Comma-separated encoder layers")
@@ -393,6 +459,11 @@ def main():
                         help="Comma-separated decoder layers")
     parser.add_argument("--encoder", action="store_true", help="Run encoder analysis")
     parser.add_argument("--decoder", action="store_true", help="Run decoder analysis")
+    
+    # COCO dataset options
+    parser.add_argument("--coco", action="store_true", help="Use COCO dataset instead of synthetic")
+    parser.add_argument("--coco-path", type=str, default=None,
+                        help="Path to COCO images directory (e.g., /path/to/val2017)")
     
     args = parser.parse_args()
     
@@ -429,6 +500,8 @@ def main():
         decoder_layers=decoder_layers,
         run_encoder=run_encoder,
         run_decoder=run_decoder,
+        use_coco=args.coco,
+        coco_path=args.coco_path,
     )
 
 
