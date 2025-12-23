@@ -31,39 +31,34 @@ def cosine_similarity_matrix(features: torch.Tensor) -> torch.Tensor:
 
 def compute_patch_similarity(
     features: torch.Tensor,
-    selected_patch_idx: int
+    selected_patch_idx: int,
+    use_centering: bool = False
 ) -> torch.Tensor:
     """
     Compute cosine similarity between a selected patch and all other patches.
     
-    Steps:
-    1. Compute mean embedding across all patches
-    2. Subtract mean from each patch (centering)
-    3. L2 normalize the centered embeddings
-    4. Compute cosine similarity
-    
     Args:
         features: Patch features [num_patches, hidden_dim]
         selected_patch_idx: Index of the selected patch
+        use_centering: If True, subtract mean before computing similarity
         
     Returns:
         Similarity scores [num_patches]
     """
     features = features.float()
     
-    # Step 1: Compute mean embedding across all patches
-    mean_embedding = features.mean(dim=0, keepdim=True)
+    if use_centering:
+        # Subtract mean from each patch (centering)
+        mean_embedding = features.mean(dim=0, keepdim=True)
+        features = features - mean_embedding
     
-    # Step 2: Subtract mean from each patch (centering)
-    centered_features = features - mean_embedding
+    # L2 normalize
+    features_normalized = F.normalize(features, p=2, dim=-1)
     
-    # Step 3: L2 normalize the centered embeddings
-    features_normalized = F.normalize(centered_features, p=2, dim=-1)
-    
-    # Step 4: Get selected patch features (now centered and normalized)
+    # Get selected patch features
     selected_features = features_normalized[selected_patch_idx]
     
-    # Step 5: Compute cosine similarity with all patches
+    # Compute cosine similarity
     similarities = torch.mv(features_normalized, selected_features)
     
     return similarities
@@ -74,7 +69,8 @@ def compute_all_similarities(
     selected_patches: List[PatchPosition],
     config: ExperimentConfig,
     vision_token_indices: Optional[torch.Tensor] = None,
-    is_decoder: bool = False
+    is_decoder: bool = False,
+    use_centering: bool = False
 ) -> Dict[str, Dict[str, torch.Tensor]]:
     """
     Compute similarities for all (layer, selected_patch) combinations.
@@ -85,6 +81,7 @@ def compute_all_similarities(
         config: Experiment configuration
         vision_token_indices: Indices of vision tokens (for decoder)
         is_decoder: Whether these are decoder features
+        use_centering: If True, subtract mean before computing similarity
         
     Returns:
         Nested dict: layer_name -> patch_name -> similarity_scores
@@ -112,7 +109,7 @@ def compute_all_similarities(
             patch_idx = config.get_patch_index(patch_pos)
             
             if patch_idx < features.shape[0]:
-                similarities = compute_patch_similarity(features, patch_idx)
+                similarities = compute_patch_similarity(features, patch_idx, use_centering=use_centering)
                 results[layer_name][patch_pos.name] = similarities
             else:
                 print(f"Warning: Patch index {patch_idx} out of range for layer {layer_name}")
@@ -142,8 +139,9 @@ class SimilarityAnalyzer:
     Analyzer for patch similarity across layers.
     """
     
-    def __init__(self, config: ExperimentConfig):
+    def __init__(self, config: ExperimentConfig, use_centering: bool = False):
         self.config = config
+        self.use_centering = use_centering
     
     def analyze_encoder(
         self,
@@ -154,7 +152,8 @@ class SimilarityAnalyzer:
             encoder_features,
             self.config.selected_patches,
             self.config,
-            is_decoder=False
+            is_decoder=False,
+            use_centering=self.use_centering
         )
     
     def analyze_decoder(
@@ -168,7 +167,8 @@ class SimilarityAnalyzer:
             self.config.selected_patches,
             self.config,
             vision_token_indices=vision_token_indices,
-            is_decoder=True
+            is_decoder=True,
+            use_centering=self.use_centering
         )
     
     def get_statistics(
