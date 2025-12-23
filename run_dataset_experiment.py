@@ -286,10 +286,8 @@ def compute_and_visualize(
                 
             data = results[layer_name][patch_pos.name]
             
-            # Use 0 to 1 range (cosine similarity is already in [-1, 1], shift to [0, 1])
-            # For z-scored features, values can be outside [-1, 1], so we clip
-            display_grid = (data['mean'] + 1) / 2  # Map [-1, 1] to [0, 1]
-            display_grid = np.clip(display_grid, 0, 1)
+            # Clip negatives to 0, display in range 0-1
+            display_grid = np.clip(data['mean'], 0, 1)
             
             im = axes[ax_idx].imshow(display_grid, cmap='RdYlGn', vmin=0, vmax=1)
             axes[ax_idx].set_title(f"{patch_pos.name}")
