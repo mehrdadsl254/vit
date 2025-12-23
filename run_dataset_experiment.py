@@ -5,7 +5,8 @@ Generates a dataset of images with random geometric objects,
 computes z-scored patch embeddings, and averages similarity across images.
 
 Usage:
-    python run_dataset_experiment.py --n-images 64 --n-objects 20
+    python run_dataset_experiment.py --n-images 64 --n-objects 20 --encoder
+    python run_dataset_experiment.py --n-images 64 --n-objects 20 --decoder
 """
 
 import argparse
@@ -13,14 +14,15 @@ import os
 import torch
 import numpy as np
 from PIL import Image
-from typing import List, Dict
+from typing import List, Dict, Optional
 from tqdm import tqdm
+import math
 
 from config import ExperimentConfig, ModelType, get_model_type, PatchPosition
 from dataset_generator import generate_dataset
 from feature_extractor import get_feature_extractor
 from similarity import reshape_similarities_to_grid
-from visualize import save_figure, create_single_layer_figure
+from visualize import save_figure
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
 
@@ -73,57 +75,27 @@ def get_patch_index(pos: PatchPosition, n_patches: int) -> int:
     return row * n_patches + col
 
 
-def run_dataset_experiment(
+def run_encoder_dataset_experiment(
     model_type: ModelType,
-    n_images: int = 64,
-    n_objects: int = 20,
-    background_color: tuple = (0, 0, 255),
-    output_dir: str = None,
-    encoder_layers: List[int] = None,
+    n_images: int,
+    n_objects: int,
+    background_color: tuple,
+    output_dir: str,
+    layers: List[int],
+    images: List[Image.Image],
+    extractor,
+    config: ExperimentConfig,
 ):
-    """Run the dataset similarity experiment"""
+    """Run encoder-specific dataset experiment"""
+    print("\n--- ENCODER ANALYSIS ---")
     
-    config = ExperimentConfig(model_type=model_type)
-    
-    if output_dir is None:
-        output_dir = f"outputs/dataset_{model_type.value}"
-    
-    os.makedirs(output_dir, exist_ok=True)
-    os.makedirs(os.path.join(output_dir, "images"), exist_ok=True)
-    os.makedirs(os.path.join(output_dir, "figures"), exist_ok=True)
-    
-    print("=" * 60)
-    print("DATASET SIMILARITY EXPERIMENT")
-    print("=" * 60)
-    print(f"Model: {config.model_name}")
-    print(f"Number of images: {n_images}")
-    print(f"Objects per image: {n_objects}")
-    print(f"Background color: {background_color}")
-    print(f"Selected patches: {[p.name for p in SELECTED_PATCHES]}")
-    
-    # Generate dataset
-    print("\n1. Generating dataset...")
-    images = generate_dataset(
-        n_images=n_images,
-        image_size=config.image_size,
-        n_objects=n_objects,
-        background_color=background_color,
-        output_dir=os.path.join(output_dir, "images"),
-    )
-    
-    # Use specific layers or defaults
-    if encoder_layers is None:
-        encoder_layers = [1, 5, 15, 31]
-    
-    # Get feature extractor
-    print("\n2. Loading model and extracting features...")
-    extractor = get_feature_extractor(model_type)
+    n_patches = config.num_patches_per_side
     
     # Extract features for all images
-    all_features = {f"encoder_layer_{l}": [] for l in encoder_layers}
+    all_features = {f"encoder_layer_{l}": [] for l in layers}
     
-    for i, image in enumerate(tqdm(images, desc="Extracting features")):
-        features = extractor.extract_features(image, encoder_layers=encoder_layers, decoder_layers=None)
+    for image in tqdm(images, desc="Extracting encoder features"):
+        features = extractor.extract_features(image, encoder_layers=layers, decoder_layers=None)
         
         for layer_name in all_features.keys():
             if layer_name in features['encoder']:
@@ -132,12 +104,79 @@ def run_dataset_experiment(
                     layer_feat = layer_feat[0]
                 all_features[layer_name].append(layer_feat)
     
-    # Compute z-scored average similarities for all 5 positions
-    print("\n3. Computing z-scored similarities for all positions...")
+    # Compute and visualize
+    results = compute_and_visualize(
+        all_features, n_patches, n_images, output_dir, "encoder", config
+    )
     
-    n_patches = config.num_patches_per_side
+    return results
+
+
+def run_decoder_dataset_experiment(
+    model_type: ModelType,
+    n_images: int,
+    n_objects: int,
+    background_color: tuple,
+    output_dir: str,
+    layers: List[int],
+    images: List[Image.Image],
+    extractor,
+    config: ExperimentConfig,
+):
+    """Run decoder-specific dataset experiment"""
+    print("\n--- DECODER ANALYSIS ---")
     
-    # Results structure: layer -> patch_name -> {'mean': grid, 'std': grid}
+    # Extract features for all images
+    all_features = {f"decoder_layer_{l}": [] for l in layers}
+    vision_token_counts = []
+    
+    for image in tqdm(images, desc="Extracting decoder features"):
+        features = extractor.extract_features(image, encoder_layers=None, decoder_layers=layers)
+        
+        vision_indices = features.get('vision_token_indices')
+        
+        for layer_name in all_features.keys():
+            if layer_name in features['decoder']:
+                layer_feat = features['decoder'][layer_name]
+                if layer_feat.dim() == 3:
+                    layer_feat = layer_feat[0]
+                
+                # Extract vision tokens only
+                if vision_indices is not None:
+                    layer_feat = layer_feat[vision_indices]
+                    vision_token_counts.append(len(vision_indices))
+                
+                all_features[layer_name].append(layer_feat)
+    
+    # Determine decoder grid size
+    if vision_token_counts:
+        n_vision_tokens = vision_token_counts[0]
+        n_patches = int(math.sqrt(n_vision_tokens))
+        print(f"Decoder vision tokens: {n_vision_tokens} ({n_patches}x{n_patches} grid)")
+    else:
+        n_patches = config.num_patches_per_side
+        print(f"Using encoder grid: {n_patches}")
+    
+    # Compute and visualize
+    results = compute_and_visualize(
+        all_features, n_patches, n_images, output_dir, "decoder", config
+    )
+    
+    return results
+
+
+def compute_and_visualize(
+    all_features: Dict[str, List[torch.Tensor]],
+    n_patches: int,
+    n_images: int,
+    output_dir: str,
+    part_name: str,
+    config: ExperimentConfig,
+):
+    """Compute similarities and create visualizations"""
+    
+    print(f"\nComputing z-scored similarities for {part_name}...")
+    
     results = {}
     
     for layer_name, features_list in all_features.items():
@@ -149,6 +188,11 @@ def run_dataset_experiment(
         
         for patch_pos in SELECTED_PATCHES:
             patch_idx = get_patch_index(patch_pos, n_patches)
+            
+            # Check if patch index is valid
+            if features_list[0].shape[0] <= patch_idx:
+                print(f"    Skipping {patch_pos.name}: idx {patch_idx} > {features_list[0].shape[0]}")
+                continue
             
             # Compute similarities for each image
             similarities = compute_zscore_similarity(features_list, patch_idx)
@@ -165,49 +209,63 @@ def run_dataset_experiment(
                 std_grid = np.std(grids, axis=0)
                 results[layer_name][patch_pos.name] = {'mean': avg_grid, 'std': std_grid}
     
-    # Visualize results - one figure per layer showing all 5 positions
-    print("\n4. Creating visualizations...")
-    
-    # Use a sample image for reference
-    sample_image = images[0] if images else None
+    # Visualize results
+    print(f"\nCreating {part_name} visualizations...")
     
     for layer_name in results.keys():
-        layer_num = layer_name.replace('encoder_layer_', '')
+        layer_num = layer_name.replace(f'{part_name}_layer_', '')
         
         # Create figure with 5 subplots (one per position)
-        fig, axes = plt.subplots(1, 5, figsize=(25, 5))
+        n_positions = len([p for p in SELECTED_PATCHES if p.name in results[layer_name]])
+        if n_positions == 0:
+            continue
+            
+        fig, axes = plt.subplots(1, n_positions, figsize=(5*n_positions, 5))
+        if n_positions == 1:
+            axes = [axes]
         
-        for i, patch_pos in enumerate(SELECTED_PATCHES):
-            if patch_pos.name in results[layer_name]:
-                data = results[layer_name][patch_pos.name]
+        ax_idx = 0
+        for patch_pos in SELECTED_PATCHES:
+            if patch_pos.name not in results[layer_name]:
+                continue
                 
-                im = axes[i].imshow(data['mean'], cmap='RdYlGn', vmin=-1, vmax=1)
-                axes[i].set_title(f"{patch_pos.name}")
-                
-                # Mark selected patch
-                patch_idx = get_patch_index(patch_pos, n_patches)
-                row = patch_idx // n_patches
-                col = patch_idx % n_patches
-                axes[i].plot(col, row, 'ro', markersize=8, markeredgecolor='black', markeredgewidth=2)
-                
-                # Add min/max annotation
-                axes[i].text(0.02, 0.98, f"min: {data['mean'].min():.3f}\nmax: {data['mean'].max():.3f}",
-                            transform=axes[i].transAxes, verticalalignment='top',
-                            fontsize=8, bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+            data = results[layer_name][patch_pos.name]
+            
+            im = axes[ax_idx].imshow(data['mean'], cmap='RdYlGn', vmin=-1, vmax=1)
+            axes[ax_idx].set_title(f"{patch_pos.name}")
+            
+            # Mark selected patch
+            patch_idx = get_patch_index(patch_pos, n_patches)
+            row = patch_idx // n_patches
+            col = patch_idx % n_patches
+            axes[ax_idx].plot(col, row, 'ro', markersize=8, markeredgecolor='black', markeredgewidth=2)
+            
+            # Add min/max annotation
+            axes[ax_idx].text(0.02, 0.98, f"min: {data['mean'].min():.3f}\nmax: {data['mean'].max():.3f}",
+                        transform=axes[ax_idx].transAxes, verticalalignment='top',
+                        fontsize=8, bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+            ax_idx += 1
         
         # Add colorbar
-        plt.colorbar(im, ax=axes.ravel().tolist(), label="Avg Cosine Similarity", shrink=0.8)
+        plt.colorbar(im, ax=axes, label="Avg Cosine Similarity", shrink=0.8)
         
-        fig.suptitle(f"Layer {layer_num} - Average Similarity (n={n_images} images)", fontsize=14)
+        fig.suptitle(f"{part_name.upper()} Layer {layer_num} - Average Similarity (n={n_images})", fontsize=14)
         plt.tight_layout()
         
-        fig_path = os.path.join(output_dir, "figures", f"avg_similarity_L{layer_num}.png")
+        fig_path = os.path.join(output_dir, "figures", f"{part_name}_avg_similarity_L{layer_num}.png")
         save_figure(fig, fig_path, dpi=150)
         print(f"  Saved: {fig_path}")
     
-    # Print row vs column analysis for center position
-    print("\n" + "=" * 60)
-    print("ROW vs COLUMN SIMILARITY ANALYSIS (Center patch)")
+    # Row vs column analysis
+    print_row_vs_column_analysis(results, n_patches, part_name)
+    
+    return results
+
+
+def print_row_vs_column_analysis(results: dict, n_patches: int, part_name: str):
+    """Print row vs column similarity analysis"""
+    print(f"\n{'='*60}")
+    print(f"ROW vs COLUMN ANALYSIS ({part_name.upper()} - Center patch)")
     print("=" * 60)
     
     center_pos = SELECTED_PATCHES[0]  # Center
@@ -215,7 +273,7 @@ def run_dataset_experiment(
     center_col = int(center_pos.rel_x * (n_patches - 1))
     
     for layer_name in results.keys():
-        layer_num = layer_name.replace('encoder_layer_', '')
+        layer_num = layer_name.replace(f'{part_name}_layer_', '')
         
         if center_pos.name not in results[layer_name]:
             continue
@@ -245,6 +303,74 @@ def run_dataset_experiment(
             print(f"  → Row neighbors MORE similar (diff: {avg_row - avg_col:.6f})")
         else:
             print(f"  → Column neighbors MORE similar (diff: {avg_col - avg_row:.6f})")
+
+
+def run_dataset_experiment(
+    model_type: ModelType,
+    n_images: int = 64,
+    n_objects: int = 20,
+    background_color: tuple = (0, 0, 255),
+    output_dir: str = None,
+    encoder_layers: List[int] = None,
+    decoder_layers: List[int] = None,
+    run_encoder: bool = True,
+    run_decoder: bool = False,
+):
+    """Run the dataset similarity experiment"""
+    
+    config = ExperimentConfig(model_type=model_type)
+    
+    if output_dir is None:
+        output_dir = f"outputs/dataset_{model_type.value}"
+    
+    os.makedirs(output_dir, exist_ok=True)
+    os.makedirs(os.path.join(output_dir, "images"), exist_ok=True)
+    os.makedirs(os.path.join(output_dir, "figures"), exist_ok=True)
+    
+    print("=" * 60)
+    print("DATASET SIMILARITY EXPERIMENT")
+    print("=" * 60)
+    print(f"Model: {config.model_name}")
+    print(f"Number of images: {n_images}")
+    print(f"Objects per image: {n_objects}")
+    print(f"Background color: {background_color}")
+    print(f"Run encoder: {run_encoder}")
+    print(f"Run decoder: {run_decoder}")
+    print(f"Selected patches: {[p.name for p in SELECTED_PATCHES]}")
+    
+    # Generate dataset
+    print("\n1. Generating dataset...")
+    images = generate_dataset(
+        n_images=n_images,
+        image_size=config.image_size,
+        n_objects=n_objects,
+        background_color=background_color,
+        output_dir=os.path.join(output_dir, "images"),
+    )
+    
+    # Get feature extractor
+    print("\n2. Loading model...")
+    extractor = get_feature_extractor(model_type)
+    
+    results = {}
+    
+    # Run encoder experiment
+    if run_encoder:
+        if encoder_layers is None:
+            encoder_layers = [1, 5, 15, 31]
+        results['encoder'] = run_encoder_dataset_experiment(
+            model_type, n_images, n_objects, background_color,
+            output_dir, encoder_layers, images, extractor, config
+        )
+    
+    # Run decoder experiment
+    if run_decoder:
+        if decoder_layers is None:
+            decoder_layers = [1, 5, 10, 15, 20, 27]
+        results['decoder'] = run_decoder_dataset_experiment(
+            model_type, n_images, n_objects, background_color,
+            output_dir, decoder_layers, images, extractor, config
+        )
     
     print("\n" + "=" * 60)
     print("EXPERIMENT COMPLETE")
@@ -261,10 +387,20 @@ def main():
     parser.add_argument("--background", type=str, default="blue", 
                         help="Background color: blue, green, red, etc.")
     parser.add_argument("--output", type=str, default=None, help="Output directory")
-    parser.add_argument("--layers", type=str, default="1,5,15,31",
-                        help="Comma-separated encoder layers to analyze")
+    parser.add_argument("--encoder-layers", type=str, default="1,5,15,31",
+                        help="Comma-separated encoder layers")
+    parser.add_argument("--decoder-layers", type=str, default="1,5,10,15,20,27",
+                        help="Comma-separated decoder layers")
+    parser.add_argument("--encoder", action="store_true", help="Run encoder analysis")
+    parser.add_argument("--decoder", action="store_true", help="Run decoder analysis")
     
     args = parser.parse_args()
+    
+    # If neither specified, run encoder by default
+    run_encoder = args.encoder
+    run_decoder = args.decoder
+    if not run_encoder and not run_decoder:
+        run_encoder = True
     
     # Parse background color
     bg_colors = {
@@ -278,7 +414,8 @@ def main():
     background = bg_colors.get(args.background.lower(), (0, 0, 255))
     
     # Parse layers
-    encoder_layers = [int(l) for l in args.layers.split(',')]
+    encoder_layers = [int(l) for l in args.encoder_layers.split(',')]
+    decoder_layers = [int(l) for l in args.decoder_layers.split(',')]
     
     model_type = get_model_type(args.model)
     
@@ -289,6 +426,9 @@ def main():
         background_color=background,
         output_dir=args.output,
         encoder_layers=encoder_layers,
+        decoder_layers=decoder_layers,
+        run_encoder=run_encoder,
+        run_decoder=run_decoder,
     )
 
 
