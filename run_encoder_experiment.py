@@ -51,8 +51,16 @@ def run_encoder_experiment(
             'white': (255, 255, 255), 'gray': (128, 128, 128),
         }
         rgb = colors.get(color.lower(), (0, 255, 0))
-        image = create_solid_color_image(rgb, config.image_size)
-        image_name = f"{color}_surface"
+        
+        # Check if noisy image requested
+        if hasattr(args, 'noisy') and args.noisy:
+            from generate_image import create_noisy_uniform_image
+            noise_level = getattr(args, 'noise_level', 0.01)
+            image = create_noisy_uniform_image(rgb, config.image_size, config.patch_size, noise_level)
+            image_name = f"{color}_noisy_{noise_level}"
+        else:
+            image = create_solid_color_image(rgb, config.image_size)
+            image_name = f"{color}_surface"
     else:
         image = create_solid_color_image((0, 255, 0), config.image_size)
         image_name = "green_surface"
@@ -138,6 +146,7 @@ def run_encoder_experiment(
 
 
 def main():
+    global args  # Make args accessible in run_encoder_experiment
     parser = argparse.ArgumentParser(description="Run encoder patch similarity experiment")
     parser.add_argument("--model", type=str, default="qwen",
                         help="Model to use: 'qwen' or 'llava'")
@@ -148,6 +157,10 @@ def main():
                         help="Output directory")
     parser.add_argument("--features-only", action="store_true",
                         help="Only save features, skip visualization")
+    parser.add_argument("--noisy", action="store_true",
+                        help="Add subtle per-patch noise to break identical embeddings")
+    parser.add_argument("--noise-level", type=float, default=0.01,
+                        help="Noise intensity (0.01 = 1% of pixel range)")
     
     args = parser.parse_args()
     
@@ -164,3 +177,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
