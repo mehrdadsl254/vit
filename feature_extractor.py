@@ -261,6 +261,39 @@ class QwenVLFeatureExtractor(BaseFeatureExtractor):
         
         inputs = self.processor(text=[text], images=image_inputs, videos=video_inputs, 
                                 padding=True, return_tensors="pt")
+        
+        # Detect vision token indices
+        # Qwen VL uses a special vision token ID (usually 151655 for image)
+        input_ids = inputs.get('input_ids')
+        if input_ids is not None:
+            # Find vision token locations
+            # Common vision token IDs for Qwen VL
+            vision_token_ids = [151655, 151656, 151657, 151859]  # <|vision_start|>, <|image_pad|>, etc.
+            
+            # Create a mask for all vision tokens
+            vision_mask = torch.zeros_like(input_ids[0], dtype=torch.bool)
+            for vid in vision_token_ids:
+                vision_mask |= (input_ids[0] == vid)
+            
+            # Get indices
+            vision_indices = torch.where(vision_mask)[0]
+            
+            if len(vision_indices) > 0:
+                self._vision_token_indices = vision_indices
+                print(f"Detected {len(vision_indices)} vision tokens at indices {vision_indices[0].item()} to {vision_indices[-1].item()}")
+            else:
+                # Fallback: estimate vision tokens from pixel_values
+                if 'pixel_values' in inputs:
+                    # Assume vision tokens are after system prompt (around position 15-20)
+                    # and count based on number of patches
+                    pixel_values = inputs['pixel_values']
+                    if pixel_values.dim() >= 4:
+                        # Estimate number of vision tokens (typically 256 after merger)
+                        num_vision_tokens = 256  # Qwen VL uses 2x2 merger, so 1024/4 = 256
+                        start_idx = 15  # Approximate start after system tokens
+                        self._vision_token_indices = torch.arange(start_idx, start_idx + num_vision_tokens)
+                        print(f"Estimated {num_vision_tokens} vision tokens starting at index {start_idx}")
+        
         return inputs
 
 
