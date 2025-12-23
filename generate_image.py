@@ -5,7 +5,11 @@ Generate solid color test images for the experiment
 from PIL import Image
 import os
 from typing import Tuple, Optional
-from config import DEFAULT_IMAGE_SIZE, DEFAULT_COLOR
+
+
+# Default settings
+DEFAULT_IMAGE_SIZE = (448, 448)
+DEFAULT_COLOR = (0, 255, 0)  # Green
 
 
 def create_solid_color_image(
@@ -34,7 +38,7 @@ def create_solid_color_image(
     return img
 
 
-def create_test_images(output_dir: str = "outputs") -> dict:
+def create_test_images(output_dir: str = "outputs", size: Tuple[int, int] = DEFAULT_IMAGE_SIZE) -> dict:
     """
     Create a set of test images with different colors.
     
@@ -57,14 +61,13 @@ def create_test_images(output_dir: str = "outputs") -> dict:
     
     for name, color in colors.items():
         path = os.path.join(output_dir, f"{name}_surface.png")
-        create_solid_color_image(color, DEFAULT_IMAGE_SIZE, path)
+        create_solid_color_image(color, size, path)
         paths[name] = path
     
     return paths
 
 
 if __name__ == "__main__":
-    # Create test images
     print("Creating test images...")
     paths = create_test_images()
     print("\nCreated images:")
