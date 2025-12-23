@@ -25,13 +25,13 @@ import torch.nn.functional as F
 import matplotlib.pyplot as plt
 
 
-# Selected patch positions (same as encoder experiment)
+# Selected patch positions - spread across image
 SELECTED_PATCHES = [
     PatchPosition("Center", 0.5, 0.5),
-    PatchPosition("North", 0.5, 0.15),
-    PatchPosition("South", 0.5, 0.85),
-    PatchPosition("East", 0.85, 0.5),
-    PatchPosition("West", 0.15, 0.5),
+    PatchPosition("TopLeft", 0.1, 0.1),
+    PatchPosition("TopRight", 0.9, 0.1),
+    PatchPosition("BottomLeft", 0.1, 0.9),
+    PatchPosition("BottomRight", 0.9, 0.9),
 ]
 
 
