@@ -98,25 +98,38 @@ def run_decoder_experiment(
         print("\nFeatures saved. Run visualization separately.")
         return features_path
     
+    # Determine decoder vision grid size
+    vision_indices = features.get('vision_token_indices')
+    if vision_indices is not None:
+        num_vision_tokens = len(vision_indices)
+        import math
+        decoder_grid_size = int(math.sqrt(num_vision_tokens))
+        print(f"Decoder vision tokens: {num_vision_tokens} ({decoder_grid_size}x{decoder_grid_size} grid)")
+    else:
+        decoder_grid_size = config.num_patches_per_side
+        print(f"No vision indices found, using encoder grid: {decoder_grid_size}")
+    
     # Compute similarities
     print("\nComputing similarities...")
     analyzer = SimilarityAnalyzer(config, use_centering=use_centering)
-    
-    vision_indices = features.get('vision_token_indices')
     similarities = analyzer.analyze_decoder(features['decoder'], vision_indices)
     
-    # Convert to grid format
+    # Convert to grid format using decoder grid size
     sim_grids = {}
     for layer_name, patch_sims in similarities.items():
         sim_grids[layer_name] = {}
         for patch_name, sims in patch_sims.items():
             sim_grids[layer_name][patch_name] = reshape_similarities_to_grid(
-                sims, config.num_patches_per_side
+                sims, decoder_grid_size
             )
     
     # Get layer names
     layers = [f"decoder_layer_{i}" for i in config.decoder_layers 
               if f"decoder_layer_{i}" in features['decoder']]
+    
+    # Create a modified config for decoder grid size
+    from dataclasses import replace
+    # Can't use replace on our config, so just override manually in visualization
     
     # Create ONE figure per layer
     print("\nCreating visualizations (one per layer)...")
@@ -126,8 +139,43 @@ def run_decoder_experiment(
         layer_num = layer_name.replace('decoder_layer_', '')
         
         title_suffix = "centered" if use_centering else "raw"
+        
+        # For decoder, we need to adjust selected patches to decoder grid
+        adjusted_patches = []
+        for patch_pos in config.selected_patches:
+            # Create adjusted patches with decoder grid index calculation
+            class AdjustedPatch:
+                def __init__(self, name, rel_x, rel_y, grid_size):
+                    self.name = name
+                    self.rel_x = rel_x
+                    self.rel_y = rel_y
+                    self._grid_size = grid_size
+            adjusted_patches.append(AdjustedPatch(
+                patch_pos.name, patch_pos.rel_x, patch_pos.rel_y, decoder_grid_size
+            ))
+        
+        # Override config for decoder visualization
+        class DecoderConfig:
+            def __init__(self, original_config, decoder_grid):
+                self.num_patches_per_side = decoder_grid
+                self.selected_patches = original_config.selected_patches
+                self.patch_size = original_config.patch_size
+                self.image_size = original_config.image_size
+            def get_patch_index(self, pos):
+                n = self.num_patches_per_side
+                col = int(pos.rel_x * (n - 1))
+                row = int(pos.rel_y * (n - 1))
+                return row * n + col
+        
+        decoder_config = DecoderConfig(config, decoder_grid_size)
+        
         fig = create_single_layer_figure(
             image, 
+            sim_grids[layer_name], 
+            layer_name,
+            config.selected_patches, 
+            decoder_config,
+            title=f"Decoder Layer {layer_num} ({title_suffix}) - {image_name}",
             sim_grids[layer_name], 
             layer_name,
             config.selected_patches, 

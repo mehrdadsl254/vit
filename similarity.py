@@ -98,21 +98,43 @@ def compute_all_similarities(
         # For decoder features, extract vision tokens
         if is_decoder and vision_token_indices is not None:
             features = features[vision_token_indices]
-        
-        # Get patch features
-        num_patches = config.total_patches
-        if features.shape[0] > num_patches:
-            features = features[:num_patches]
-        
-        # Compute similarity for each selected patch
-        for patch_pos in selected_patches:
-            patch_idx = config.get_patch_index(patch_pos)
+            actual_num_tokens = features.shape[0]
             
-            if patch_idx < features.shape[0]:
-                similarities = compute_patch_similarity(features, patch_idx, use_centering=use_centering)
-                results[layer_name][patch_pos.name] = similarities
-            else:
-                print(f"Warning: Patch index {patch_idx} out of range for layer {layer_name}")
+            # Decoder may have fewer vision tokens (e.g., 256 instead of 1024)
+            # Compute the actual grid size
+            import math
+            actual_grid_size = int(math.sqrt(actual_num_tokens))
+            
+            if actual_grid_size * actual_grid_size != actual_num_tokens:
+                print(f"Warning: {actual_num_tokens} vision tokens is not a perfect square")
+                continue
+            
+            # Compute adjusted patch indices for decoder grid
+            for patch_pos in selected_patches:
+                # Map relative position to decoder grid
+                col = int(patch_pos.rel_x * (actual_grid_size - 1))
+                row = int(patch_pos.rel_y * (actual_grid_size - 1))
+                patch_idx = row * actual_grid_size + col
+                
+                if patch_idx < features.shape[0]:
+                    similarities = compute_patch_similarity(features, patch_idx, use_centering=use_centering)
+                    results[layer_name][patch_pos.name] = similarities
+                else:
+                    print(f"Warning: Adjusted patch index {patch_idx} out of range for layer {layer_name}")
+        else:
+            # Encoder case - use original logic
+            num_patches = config.total_patches
+            if features.shape[0] > num_patches:
+                features = features[:num_patches]
+            
+            for patch_pos in selected_patches:
+                patch_idx = config.get_patch_index(patch_pos)
+                
+                if patch_idx < features.shape[0]:
+                    similarities = compute_patch_similarity(features, patch_idx, use_centering=use_centering)
+                    results[layer_name][patch_pos.name] = similarities
+                else:
+                    print(f"Warning: Patch index {patch_idx} out of range for layer {layer_name}")
     
     return results
 
