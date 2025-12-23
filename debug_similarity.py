@@ -1,6 +1,6 @@
 """
-Debug script to compare positional encoding behavior between models.
-Tests Qwen VL (RoPE) vs LLaVA (additive positional embeddings).
+Debug script to test positional encoding effects using noisy uniform images.
+Analyzes if row neighbors are more similar than column neighbors.
 """
 
 import argparse
@@ -10,7 +10,7 @@ from PIL import Image
 from feature_extractor import get_feature_extractor
 from similarity import reshape_similarities_to_grid
 from config import ExperimentConfig, ModelType, get_model_type
-from generate_image import create_solid_color_image
+from generate_image import create_noisy_uniform_image, create_solid_color_image
 import torch.nn.functional as F
 
 
@@ -23,117 +23,144 @@ def compute_similarity(features, selected_patch_idx):
     return similarities
 
 
-def analyze_positional_encoding(model_type: ModelType):
+def analyze_row_vs_column_similarity(model_type: ModelType, use_noise: bool = True, noise_level: float = 0.01):
+    """
+    Test if row neighbors (adjacent in sequence) are more similar than column neighbors.
+    
+    Hypothesis: With 1D positional encoding applied row-by-row:
+    - Patches in same row should be more similar (adjacent positions)
+    - Patches in same column should be less similar (far apart in sequence)
+    """
     config = ExperimentConfig(model_type=model_type)
     
     print("=" * 60)
-    print(f"POSITIONAL ENCODING ANALYSIS: {model_type.value.upper()}")
+    print(f"ROW vs COLUMN SIMILARITY ANALYSIS")
     print("=" * 60)
     print(f"Model: {config.model_name}")
-    print(f"Positional Encoding Type: {config.positional_encoding}")
-    print(f"Image Size: {config.image_size}")
-    print(f"Expected Patches: {config.num_patches_per_side}x{config.num_patches_per_side} = {config.total_patches}")
+    print(f"Positional Encoding: {config.positional_encoding}")
+    print(f"Using noisy image: {use_noise} (noise_level={noise_level})")
     
-    # Create uniform test image
-    image = create_solid_color_image((0, 255, 0), config.image_size)
+    # Create test image
+    if use_noise:
+        image = create_noisy_uniform_image(
+            base_color=(0, 255, 0),
+            size=config.image_size,
+            patch_size=config.patch_size,
+            noise_level=noise_level
+        )
+        print(f"Created noisy uniform image with per-patch variation")
+    else:
+        image = create_solid_color_image((0, 255, 0), config.image_size)
+        print(f"Created solid uniform image")
     
     # Get extractor
     extractor = get_feature_extractor(model_type)
     
-    # Test a few layers
-    if model_type == ModelType.QWEN_VL:
-        test_layers = [1, 5, 15, 31]
-    else:  # LLaVA
-        test_layers = [1, 5, 12, 23]
-    
+    # Test multiple layers
+    test_layers = [1, 5, 15, 31] if model_type == ModelType.QWEN_VL else [1, 5, 12, 23]
     features = extractor.extract_features(image, encoder_layers=test_layers, decoder_layers=None)
     
-    # Get reference patch indices
-    center_idx = config.get_patch_index(config.selected_patches[0])
-    neighbor_idx = center_idx + 1
-    far_idx = 0
+    n = config.num_patches_per_side
+    center_row, center_col = n // 2, n // 2
+    center_idx = center_row * n + center_col
     
-    print(f"\nReference patches: Center={center_idx}, Neighbor={neighbor_idx}, Far={far_idx}")
-    
-    all_identical = True
+    print(f"\nGrid: {n}x{n} patches")
+    print(f"Center patch: ({center_row}, {center_col}) = idx {center_idx}")
     
     for layer_idx in test_layers:
         layer_name = f'encoder_layer_{layer_idx}'
         if layer_name not in features['encoder']:
-            print(f"\nLayer {layer_idx} not found, skipping...")
             continue
         
         layer_features = features['encoder'][layer_name]
         if layer_features.dim() == 3:
             layer_features = layer_features[0]
         
-        # Handle case where we might have fewer tokens than expected
-        actual_tokens = layer_features.shape[0]
-        if actual_tokens != config.total_patches:
-            print(f"\n⚠️ Layer {layer_idx}: Expected {config.total_patches} patches, got {actual_tokens}")
-        
-        # Adjust indices if needed
-        if center_idx >= actual_tokens:
-            center_idx = actual_tokens // 2
-            neighbor_idx = center_idx + 1 if center_idx + 1 < actual_tokens else center_idx - 1
-        
         print(f"\n{'='*60}")
         print(f"LAYER {layer_idx}")
         print(f"{'='*60}")
-        print(f"Feature shape: {layer_features.shape}")
         
-        # Check embedding differences
-        emb_center = layer_features[center_idx].float()
-        emb_neighbor = layer_features[neighbor_idx].float()
-        emb_far = layer_features[far_idx].float()
+        # Check if embeddings differ
+        emb_check = layer_features[:10].float()
+        max_diff = (emb_check[0] - emb_check[1]).abs().max().item()
         
-        diff_neighbor = (emb_center - emb_neighbor).abs().max().item()
-        diff_far = (emb_center - emb_far).abs().max().item()
+        if max_diff < 0.0001:
+            print("⚠️ All embeddings still identical! Increase noise level.")
+            continue
         
-        print(f"Max diff Center-Neighbor: {diff_neighbor:.8f}")
-        print(f"Max diff Center-Far: {diff_far:.8f}")
+        print(f"✓ Embeddings differ (max_diff: {max_diff:.6f})")
         
-        if diff_neighbor > 0.0001:
-            all_identical = False
-            sim = compute_similarity(layer_features, center_idx)
-            print(f"✓ DIFFERENT embeddings! Similarity range: [{sim.min():.6f}, {sim.max():.6f}]")
+        # Compute similarities from center patch
+        similarities = compute_similarity(layer_features, center_idx)
+        grid = reshape_similarities_to_grid(similarities, n)
+        
+        # Analyze row neighbors vs column neighbors
+        row_sims = []  # Same row, different columns
+        col_sims = []  # Same column, different rows
+        
+        for offset in range(1, min(5, n // 2)):  # Check up to 4 neighbors
+            # Row neighbors (same row, offset columns)
+            if center_col + offset < n:
+                row_sims.append(grid[center_row, center_col + offset])
+            if center_col - offset >= 0:
+                row_sims.append(grid[center_row, center_col - offset])
             
-            # Show spatial pattern for first layer with differences
-            grid_size = int(np.sqrt(actual_tokens))
-            if grid_size * grid_size == actual_tokens:
-                grid = reshape_similarities_to_grid(sim, grid_size)
-                center_row = center_idx // grid_size
-                center_col = center_idx % grid_size
-                print(f"\n3x3 around center patch:")
-                for r in range(max(0, center_row-1), min(grid_size, center_row+2)):
-                    row_vals = []
-                    for c in range(max(0, center_col-1), min(grid_size, center_col+2)):
-                        row_vals.append(f"{grid[r,c]:.4f}")
-                    print(f"  {row_vals}")
+            # Column neighbors (same column, offset rows)
+            if center_row + offset < n:
+                col_sims.append(grid[center_row + offset, center_col])
+            if center_row - offset >= 0:
+                col_sims.append(grid[center_row - offset, center_col])
+        
+        avg_row = np.mean(row_sims) if row_sims else 0
+        avg_col = np.mean(col_sims) if col_sims else 0
+        
+        print(f"\n  Avg similarity to ROW neighbors:    {avg_row:.6f}")
+        print(f"  Avg similarity to COLUMN neighbors: {avg_col:.6f}")
+        
+        if avg_row > avg_col:
+            print(f"  ✓ ROW neighbors MORE similar (diff: {avg_row - avg_col:.6f})")
+            print(f"    This supports 1D row-wise positional encoding!")
+        elif avg_col > avg_row:
+            print(f"  ✗ COLUMN neighbors more similar (diff: {avg_col - avg_row:.6f})")
+            print(f"    Suggests 2D or no positional effect")
         else:
-            print(f"⚠️ ALL EMBEDDINGS IDENTICAL at this layer")
+            print(f"  = No difference detected")
+        
+        # Show local similarity pattern
+        print(f"\n  5x5 region around center:")
+        r1, r2 = max(0, center_row-2), min(n, center_row+3)
+        c1, c2 = max(0, center_col-2), min(n, center_col+3)
+        for r in range(r1, r2):
+            row_str = "  "
+            for c in range(c1, c2):
+                if r == center_row and c == center_col:
+                    row_str += " [SEL] "
+                else:
+                    row_str += f" {grid[r, c]:.3f} "
+            print(row_str)
     
     # Conclusion
     print("\n" + "=" * 60)
-    print("CONCLUSION")
+    print("INTERPRETATION")
     print("=" * 60)
-    
-    if all_identical:
-        print(f"All patches have IDENTICAL embeddings for uniform image.")
-        print(f"This confirms {model_type.value} uses RoPE (position in attention only).")
-    else:
-        print(f"Patches have DIFFERENT embeddings even for uniform image!")
-        print(f"This confirms {model_type.value} uses ADDITIVE positional embeddings.")
+    print("If ROW neighbors are consistently more similar than COLUMN neighbors,")
+    print("this indicates 1D positional encoding is applied row-by-row.")
+    print("(Patches are numbered 0,1,2...n-1 in first row, then n,n+1...2n-1 in second row, etc)")
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Compare positional encoding behavior")
-    parser.add_argument("--model", type=str, default="qwen",
-                        help="Model to test: 'qwen' or 'llava'")
+    parser = argparse.ArgumentParser(description="Test row vs column similarity")
+    parser.add_argument("--model", type=str, default="qwen", help="Model: 'qwen' or 'llava'")
+    parser.add_argument("--noise", type=float, default=0.01, help="Noise level (0-1)")
+    parser.add_argument("--no-noise", action="store_true", help="Use uniform image (no noise)")
     args = parser.parse_args()
     
     model_type = get_model_type(args.model)
-    analyze_positional_encoding(model_type)
+    analyze_row_vs_column_similarity(
+        model_type=model_type,
+        use_noise=not args.no_noise,
+        noise_level=args.noise
+    )
 
 
 if __name__ == "__main__":
