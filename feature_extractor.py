@@ -213,46 +213,40 @@ class QwenVLFeatureExtractor(BaseFeatureExtractor):
         if not self.model:
             raise RuntimeError("Model not loaded. Call load_model() first.")
         
-        # Qwen 2.5 VL structure: model.model.layers
+        # Qwen 2.5 VL structure: model.model.language_model.layers
         if hasattr(self.model, 'model'):
-            llm = self.model.model
+            inner_model = self.model.model
             
-            # Check if layers is directly accessible
-            if hasattr(llm, 'layers'):
-                for i, layer in enumerate(llm.layers):
+            # Check for language_model inside model.model
+            if hasattr(inner_model, 'language_model'):
+                lm = inner_model.language_model
+                if hasattr(lm, 'layers'):
+                    for i, layer in enumerate(lm.layers):
+                        layers.append((i, layer))
+                    print(f"Found {len(layers)} decoder layers in model.model.language_model.layers")
+                    return layers
+                # Also try lm.model.layers
+                if hasattr(lm, 'model') and hasattr(lm.model, 'layers'):
+                    for i, layer in enumerate(lm.model.layers):
+                        layers.append((i, layer))
+                    print(f"Found {len(layers)} decoder layers in model.model.language_model.model.layers")
+                    return layers
+            
+            # Fallback: check model.model.layers directly
+            if hasattr(inner_model, 'layers'):
+                for i, layer in enumerate(inner_model.layers):
                     layers.append((i, layer))
                 print(f"Found {len(layers)} decoder layers in model.model.layers")
-                return layers
-            
-            # Check for embed_tokens and layers pattern (common in LLM)
-            # Try to find layers in children
-            for name, child in llm.named_children():
-                if 'layers' in name.lower() or name == 'layers':
-                    if hasattr(child, '__len__'):
-                        for i, layer in enumerate(child):
-                            layers.append((i, layer))
-                        print(f"Found {len(layers)} decoder layers in model.model.{name}")
-                        return layers
-            
-            # Print structure of model.model for debugging
-            print(f"model.model structure:")
-            for name, _ in llm.named_children():
-                print(f"  - {name}")
-        
-        # Try alternative: model.language_model.model.layers
-        if hasattr(self.model, 'language_model'):
-            lm = self.model.language_model
-            if hasattr(lm, 'model') and hasattr(lm.model, 'layers'):
-                for i, layer in enumerate(lm.model.layers):
-                    layers.append((i, layer))
-                print(f"Found {len(layers)} decoder layers in language_model.model.layers")
                 return layers
         
         # Debug: print model structure if no layers found
         if not layers:
-            print("WARNING: No decoder layers found. Model structure:")
-            for name, _ in self.model.named_children():
-                print(f"  - {name}")
+            print("WARNING: No decoder layers found.")
+            if hasattr(self.model, 'model') and hasattr(self.model.model, 'language_model'):
+                lm = self.model.model.language_model
+                print(f"language_model structure:")
+                for name, _ in lm.named_children():
+                    print(f"  - {name}")
         
         return layers
     
