@@ -21,7 +21,7 @@ DEFAULT_COLORS = [
 ]
 
 # Shape types
-SHAPE_TYPES = ['circle', 'square', 'rectangle', 'triangle', 'ellipse']
+SHAPE_TYPES = ['circle', 'triangle', 'square', 'oval', 'parallelogram']
 
 
 @dataclass
@@ -59,7 +59,7 @@ def draw_shape(draw: ImageDraw.Draw, obj: GeometricObject):
     x2, y2 = obj.x + obj.width, obj.y + obj.height
     
     if obj.shape == 'circle':
-        # For circle, use min dimension
+        # Circle uses min dimension to be round
         size = min(obj.width, obj.height)
         cx, cy = x1 + obj.width // 2, y1 + obj.height // 2
         draw.ellipse([cx - size//2, cy - size//2, cx + size//2, cy + size//2], fill=obj.color)
@@ -68,11 +68,8 @@ def draw_shape(draw: ImageDraw.Draw, obj: GeometricObject):
         size = min(obj.width, obj.height)
         draw.rectangle([x1, y1, x1 + size, y1 + size], fill=obj.color)
     
-    elif obj.shape == 'rectangle':
-        draw.rectangle([x1, y1, x2, y2], fill=obj.color)
-    
     elif obj.shape == 'triangle':
-        # Draw equilateral-ish triangle
+        # Equilateral triangle
         points = [
             (x1 + obj.width // 2, y1),  # Top
             (x1, y2),                    # Bottom left
@@ -80,8 +77,20 @@ def draw_shape(draw: ImageDraw.Draw, obj: GeometricObject):
         ]
         draw.polygon(points, fill=obj.color)
     
-    elif obj.shape == 'ellipse':
+    elif obj.shape == 'oval':
+        # Oval is an ellipse
         draw.ellipse([x1, y1, x2, y2], fill=obj.color)
+    
+    elif obj.shape == 'parallelogram':
+        # Parallelogram - slanted rectangle
+        offset = obj.width // 4
+        points = [
+            (x1 + offset, y1),      # Top left (shifted right)
+            (x2, y1),               # Top right
+            (x2 - offset, y2),      # Bottom right (shifted left)
+            (x1, y2),               # Bottom left
+        ]
+        draw.polygon(points, fill=obj.color)
 
 
 def generate_random_object(
@@ -89,8 +98,7 @@ def generate_random_object(
     existing_objects: List[GeometricObject],
     shapes: List[str] = SHAPE_TYPES,
     colors: List[Tuple[int, int, int]] = DEFAULT_COLORS,
-    min_size: int = 20,
-    max_size: int = 60,
+    object_size: int = 40,
     max_attempts: int = 100
 ) -> Optional[GeometricObject]:
     """Generate a random object that doesn't overlap with existing ones"""
@@ -102,13 +110,9 @@ def generate_random_object(
         shape = random.choice(shapes)
         color = random.choice(colors)
         
-        # Random size
-        obj_width = random.randint(min_size, max_size)
-        obj_height = random.randint(min_size, max_size)
-        
-        # For squares, make dimensions equal
-        if shape == 'square':
-            obj_height = obj_width
+        # Fixed size for all objects
+        obj_width = object_size
+        obj_height = object_size
         
         # Random position (ensure fully inside image)
         max_x = width - obj_width - 5
@@ -142,8 +146,7 @@ def generate_single_image(
     background_color: Tuple[int, int, int] = (0, 0, 255),  # Blue
     shapes: List[str] = SHAPE_TYPES,
     colors: List[Tuple[int, int, int]] = DEFAULT_COLORS,
-    min_size: int = 20,
-    max_size: int = 60,
+    object_size: int = 40,
     seed: Optional[int] = None,
 ) -> Tuple[Image.Image, List[GeometricObject]]:
     """Generate a single image with random geometric objects"""
@@ -159,7 +162,7 @@ def generate_single_image(
     
     for i in range(n_objects):
         obj = generate_random_object(
-            image_size, objects, shapes, colors, min_size, max_size
+            image_size, objects, shapes, colors, object_size
         )
         if obj is not None:
             objects.append(obj)
@@ -175,8 +178,7 @@ def generate_dataset(
     background_color: Tuple[int, int, int] = (0, 0, 255),
     shapes: List[str] = SHAPE_TYPES,
     colors: List[Tuple[int, int, int]] = DEFAULT_COLORS,
-    min_size: int = 20,
-    max_size: int = 60,
+    object_size: int = 40,
     output_dir: Optional[str] = None,
     base_seed: int = 42,
 ) -> List[Image.Image]:
@@ -190,8 +192,7 @@ def generate_dataset(
         background_color: RGB background color
         shapes: List of shape types to use
         colors: List of colors to use
-        min_size: Minimum object size
-        max_size: Maximum object size
+        object_size: Fixed size for all objects (width and height)
         output_dir: If provided, save images to this directory
         base_seed: Base random seed for reproducibility
         
@@ -211,8 +212,7 @@ def generate_dataset(
             background_color=background_color,
             shapes=shapes,
             colors=colors,
-            min_size=min_size,
-            max_size=max_size,
+            object_size=object_size,
             seed=base_seed + i,
         )
         
