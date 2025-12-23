@@ -16,13 +16,23 @@ from PIL import Image
 from typing import List, Dict
 from tqdm import tqdm
 
-from config import ExperimentConfig, ModelType, get_model_type
+from config import ExperimentConfig, ModelType, get_model_type, PatchPosition
 from dataset_generator import generate_dataset
 from feature_extractor import get_feature_extractor
 from similarity import reshape_similarities_to_grid
-from visualize import save_figure
+from visualize import save_figure, create_single_layer_figure
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
+
+
+# Selected patch positions (same as encoder experiment)
+SELECTED_PATCHES = [
+    PatchPosition("Center", 0.5, 0.5),
+    PatchPosition("North", 0.5, 0.15),
+    PatchPosition("South", 0.5, 0.85),
+    PatchPosition("East", 0.85, 0.5),
+    PatchPosition("West", 0.15, 0.5),
+]
 
 
 def compute_zscore_similarity(
@@ -31,30 +41,16 @@ def compute_zscore_similarity(
 ) -> List[torch.Tensor]:
     """
     Compute z-scored cosine similarity across multiple images.
-    
-    Steps:
-    1. Stack all features
-    2. Compute mean and std across all images
-    3. Z-normalize each patch embedding
-    4. Compute cosine similarity for each image
-    
-    Args:
-        all_features: List of feature tensors, each [num_patches, hidden_dim]
-        selected_patch_idx: Index of the reference patch
-        
-    Returns:
-        List of similarity tensors, one per image
     """
     # Stack features: [n_images, n_patches, hidden_dim]
     stacked = torch.stack(all_features, dim=0).float()
     
     # Compute mean and std across all images and patches
-    # Mean/std over dim 0 (images) and dim 1 (patches)
-    mean = stacked.mean(dim=(0, 1), keepdim=True)  # [1, 1, hidden_dim]
-    std = stacked.std(dim=(0, 1), keepdim=True) + 1e-8  # [1, 1, hidden_dim]
+    mean = stacked.mean(dim=(0, 1), keepdim=True)
+    std = stacked.std(dim=(0, 1), keepdim=True) + 1e-8
     
     # Z-normalize
-    z_features = (stacked - mean) / std  # [n_images, n_patches, hidden_dim]
+    z_features = (stacked - mean) / std
     
     # L2 normalize
     z_features_normalized = F.normalize(z_features, p=2, dim=-1)
@@ -62,12 +58,19 @@ def compute_zscore_similarity(
     # Compute similarity for each image
     similarities = []
     for i in range(z_features_normalized.shape[0]):
-        features = z_features_normalized[i]  # [n_patches, hidden_dim]
-        selected = features[selected_patch_idx]  # [hidden_dim]
-        sim = torch.mv(features, selected)  # [n_patches]
+        features = z_features_normalized[i]
+        selected = features[selected_patch_idx]
+        sim = torch.mv(features, selected)
         similarities.append(sim)
     
     return similarities
+
+
+def get_patch_index(pos: PatchPosition, n_patches: int) -> int:
+    """Convert relative position to patch index"""
+    col = int(pos.rel_x * (n_patches - 1))
+    row = int(pos.rel_y * (n_patches - 1))
+    return row * n_patches + col
 
 
 def run_dataset_experiment(
@@ -96,6 +99,7 @@ def run_dataset_experiment(
     print(f"Number of images: {n_images}")
     print(f"Objects per image: {n_objects}")
     print(f"Background color: {background_color}")
+    print(f"Selected patches: {[p.name for p in SELECTED_PATCHES]}")
     
     # Generate dataset
     print("\n1. Generating dataset...")
@@ -128,12 +132,12 @@ def run_dataset_experiment(
                     layer_feat = layer_feat[0]
                 all_features[layer_name].append(layer_feat)
     
-    # Compute z-scored average similarities
-    print("\n3. Computing z-scored similarities...")
+    # Compute z-scored average similarities for all 5 positions
+    print("\n3. Computing z-scored similarities for all positions...")
     
     n_patches = config.num_patches_per_side
-    center_idx = n_patches // 2 * n_patches + n_patches // 2
     
+    # Results structure: layer -> patch_name -> {'mean': grid, 'std': grid}
     results = {}
     
     for layer_name, features_list in all_features.items():
@@ -141,67 +145,83 @@ def run_dataset_experiment(
             continue
         
         print(f"  Processing {layer_name}...")
+        results[layer_name] = {}
         
-        # Compute similarities for each image
-        similarities = compute_zscore_similarity(features_list, center_idx)
-        
-        # Convert to grids
-        grids = []
-        for sim in similarities:
-            if sim.shape[0] >= n_patches * n_patches:
-                grid = reshape_similarities_to_grid(sim[:n_patches*n_patches], n_patches)
-                grids.append(grid)
-        
-        if grids:
-            # Average across images
-            avg_grid = np.mean(grids, axis=0)
-            std_grid = np.std(grids, axis=0)
-            results[layer_name] = {'mean': avg_grid, 'std': std_grid}
+        for patch_pos in SELECTED_PATCHES:
+            patch_idx = get_patch_index(patch_pos, n_patches)
+            
+            # Compute similarities for each image
+            similarities = compute_zscore_similarity(features_list, patch_idx)
+            
+            # Convert to grids
+            grids = []
+            for sim in similarities:
+                if sim.shape[0] >= n_patches * n_patches:
+                    grid = reshape_similarities_to_grid(sim[:n_patches*n_patches], n_patches)
+                    grids.append(grid)
+            
+            if grids:
+                avg_grid = np.mean(grids, axis=0)
+                std_grid = np.std(grids, axis=0)
+                results[layer_name][patch_pos.name] = {'mean': avg_grid, 'std': std_grid}
     
-    # Visualize results
+    # Visualize results - one figure per layer showing all 5 positions
     print("\n4. Creating visualizations...")
     
-    for layer_name, data in results.items():
+    # Use a sample image for reference
+    sample_image = images[0] if images else None
+    
+    for layer_name in results.keys():
         layer_num = layer_name.replace('encoder_layer_', '')
         
-        fig, axes = plt.subplots(1, 2, figsize=(14, 6))
+        # Create figure with 5 subplots (one per position)
+        fig, axes = plt.subplots(1, 5, figsize=(25, 5))
         
-        # Mean heatmap
-        im1 = axes[0].imshow(data['mean'], cmap='RdYlGn', vmin=-1, vmax=1)
-        axes[0].set_title(f"Layer {layer_num} - Average Similarity (n={n_images})")
-        axes[0].set_xlabel("Patch Column")
-        axes[0].set_ylabel("Patch Row")
-        plt.colorbar(im1, ax=axes[0], label="Cosine Similarity")
+        for i, patch_pos in enumerate(SELECTED_PATCHES):
+            if patch_pos.name in results[layer_name]:
+                data = results[layer_name][patch_pos.name]
+                
+                im = axes[i].imshow(data['mean'], cmap='RdYlGn', vmin=-1, vmax=1)
+                axes[i].set_title(f"{patch_pos.name}")
+                
+                # Mark selected patch
+                patch_idx = get_patch_index(patch_pos, n_patches)
+                row = patch_idx // n_patches
+                col = patch_idx % n_patches
+                axes[i].plot(col, row, 'ro', markersize=8, markeredgecolor='black', markeredgewidth=2)
+                
+                # Add min/max annotation
+                axes[i].text(0.02, 0.98, f"min: {data['mean'].min():.3f}\nmax: {data['mean'].max():.3f}",
+                            transform=axes[i].transAxes, verticalalignment='top',
+                            fontsize=8, bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
         
-        # Mark center
-        center_row = n_patches // 2
-        center_col = n_patches // 2
-        axes[0].plot(center_col, center_row, 'ro', markersize=8, markeredgecolor='black', markeredgewidth=2)
+        # Add colorbar
+        plt.colorbar(im, ax=axes.ravel().tolist(), label="Avg Cosine Similarity", shrink=0.8)
         
-        # Std heatmap
-        im2 = axes[1].imshow(data['std'], cmap='viridis', vmin=0)
-        axes[1].set_title(f"Layer {layer_num} - Std Deviation")
-        axes[1].set_xlabel("Patch Column")
-        axes[1].set_ylabel("Patch Row")
-        plt.colorbar(im2, ax=axes[1], label="Standard Deviation")
-        axes[1].plot(center_col, center_row, 'ro', markersize=8, markeredgecolor='black', markeredgewidth=2)
-        
+        fig.suptitle(f"Layer {layer_num} - Average Similarity (n={n_images} images)", fontsize=14)
         plt.tight_layout()
         
         fig_path = os.path.join(output_dir, "figures", f"avg_similarity_L{layer_num}.png")
         save_figure(fig, fig_path, dpi=150)
         print(f"  Saved: {fig_path}")
     
-    # Print row vs column analysis
+    # Print row vs column analysis for center position
     print("\n" + "=" * 60)
-    print("ROW vs COLUMN SIMILARITY ANALYSIS")
+    print("ROW vs COLUMN SIMILARITY ANALYSIS (Center patch)")
     print("=" * 60)
     
-    for layer_name, data in results.items():
+    center_pos = SELECTED_PATCHES[0]  # Center
+    center_row = int(center_pos.rel_y * (n_patches - 1))
+    center_col = int(center_pos.rel_x * (n_patches - 1))
+    
+    for layer_name in results.keys():
         layer_num = layer_name.replace('encoder_layer_', '')
-        grid = data['mean']
         
-        # Get row and column neighbors
+        if center_pos.name not in results[layer_name]:
+            continue
+            
+        grid = results[layer_name][center_pos.name]['mean']
+        
         row_sims = []
         col_sims = []
         
