@@ -1,29 +1,45 @@
 """
-Configuration for Qwen 2.5 VL Patch Similarity Experiment
+Configuration for VLM Patch Similarity Experiment
 
-Two experiments:
-1. Encoder (ViT) - Vision encoder layers
-2. Decoder (LLM) - Language model layers with vision tokens
+Supports multiple models:
+- Qwen 2.5 VL 7B (RoPE positional encoding)
+- LLaVA 1.5 7B (Additive positional encoding)
 """
 
 from dataclasses import dataclass, field
-from typing import List, Tuple
+from typing import List, Tuple, Optional
+from enum import Enum
 import os
 
-# Model configuration
-MODEL_NAME = "Qwen/Qwen2.5-VL-7B-Instruct"
 
-# Image configuration
-DEFAULT_IMAGE_SIZE = (448, 448)  # Width x Height
-DEFAULT_COLOR = (0, 255, 0)  # Green RGB
+class ModelType(Enum):
+    """Supported model types"""
+    QWEN_VL = "qwen"
+    LLAVA = "llava"
 
-# Patch configuration (Qwen VL uses 14x14 patches)
-PATCH_SIZE = 14
 
-# Layer selection pattern:
-# First layers: 1,2,3,4,5 (increment by 1)
-# Then: 7,9 (increment by 2)  
-# Then: 12,15,18,... (increment by 3)
+# Model configurations
+MODEL_CONFIGS = {
+    ModelType.QWEN_VL: {
+        "name": "Qwen/Qwen2.5-VL-7B-Instruct",
+        "image_size": (448, 448),  # Can be dynamic
+        "patch_size": 14,
+        "encoder_max_layers": 32,
+        "decoder_max_layers": 28,
+        "positional_encoding": "rope",  # Rotary Position Embedding
+    },
+    ModelType.LLAVA: {
+        "name": "llava-hf/llava-1.5-7b-hf",
+        "image_size": (336, 336),  # Fixed for CLIP ViT
+        "patch_size": 14,
+        "encoder_max_layers": 24,  # CLIP ViT-L has 24 layers
+        "decoder_max_layers": 32,  # Vicuna/LLaMA has 32 layers
+        "positional_encoding": "additive",  # Learned additive embeddings
+    },
+}
+
+
+# Layer selection pattern
 def generate_layer_indices(max_layers: int) -> List[int]:
     """
     Generate layer indices with pattern:
@@ -53,16 +69,6 @@ def generate_layer_indices(max_layers: int) -> List[int]:
     return layers
 
 
-# Qwen 2.5 VL 7B architecture:
-# - ViT encoder: ~32 blocks (approximate, need to verify)
-# - LLM decoder: 28 layers
-ENCODER_MAX_LAYERS = 32
-DECODER_MAX_LAYERS = 28
-
-ENCODER_LAYERS = generate_layer_indices(ENCODER_MAX_LAYERS)
-DECODER_LAYERS = generate_layer_indices(DECODER_MAX_LAYERS)
-
-
 @dataclass
 class PatchPosition:
     """Named patch position with relative coordinates (0-1 range)"""
@@ -85,14 +91,44 @@ SELECTED_PATCHES: List[PatchPosition] = [
 @dataclass
 class ExperimentConfig:
     """Full experiment configuration"""
-    model_name: str = MODEL_NAME
-    image_size: Tuple[int, int] = DEFAULT_IMAGE_SIZE
-    image_color: Tuple[int, int, int] = DEFAULT_COLOR
-    patch_size: int = PATCH_SIZE
-    encoder_layers: List[int] = field(default_factory=lambda: ENCODER_LAYERS)
-    decoder_layers: List[int] = field(default_factory=lambda: DECODER_LAYERS)
+    model_type: ModelType = ModelType.QWEN_VL
+    image_color: Tuple[int, int, int] = (0, 255, 0)  # Green RGB
     selected_patches: List[PatchPosition] = field(default_factory=lambda: SELECTED_PATCHES)
     output_dir: str = "outputs"
+    
+    def __post_init__(self):
+        """Set model-specific configurations"""
+        config = MODEL_CONFIGS[self.model_type]
+        self._model_name = config["name"]
+        self._image_size = config["image_size"]
+        self._patch_size = config["patch_size"]
+        self._encoder_max_layers = config["encoder_max_layers"]
+        self._decoder_max_layers = config["decoder_max_layers"]
+        self._positional_encoding = config["positional_encoding"]
+    
+    @property
+    def model_name(self) -> str:
+        return self._model_name
+    
+    @property
+    def image_size(self) -> Tuple[int, int]:
+        return self._image_size
+    
+    @property
+    def patch_size(self) -> int:
+        return self._patch_size
+    
+    @property
+    def positional_encoding(self) -> str:
+        return self._positional_encoding
+    
+    @property
+    def encoder_layers(self) -> List[int]:
+        return generate_layer_indices(self._encoder_max_layers)
+    
+    @property
+    def decoder_layers(self) -> List[int]:
+        return generate_layer_indices(self._decoder_max_layers)
     
     @property
     def num_patches_per_side(self) -> int:
@@ -110,13 +146,15 @@ class ExperimentConfig:
         return row * n + col
 
 
-def print_config():
+def print_config(model_type: ModelType = ModelType.QWEN_VL):
     """Print current configuration"""
-    config = ExperimentConfig()
+    config = ExperimentConfig(model_type=model_type)
     print("=" * 50)
-    print("Qwen 2.5 VL Patch Similarity Experiment Config")
+    print(f"VLM Patch Similarity Experiment Config")
     print("=" * 50)
+    print(f"Model Type: {model_type.value}")
     print(f"Model: {config.model_name}")
+    print(f"Positional Encoding: {config.positional_encoding}")
     print(f"Image size: {config.image_size}")
     print(f"Patch size: {config.patch_size}x{config.patch_size}")
     print(f"Patches per side: {config.num_patches_per_side}")
@@ -129,5 +167,19 @@ def print_config():
         print(f"  {pos.name}: ({pos.rel_x}, {pos.rel_y}) -> index {idx}")
 
 
+def get_model_type(model_str: str) -> ModelType:
+    """Convert string to ModelType enum"""
+    model_str = model_str.lower()
+    if model_str in ("qwen", "qwen_vl", "qwenvl"):
+        return ModelType.QWEN_VL
+    elif model_str in ("llava", "llava1.5", "llava-1.5"):
+        return ModelType.LLAVA
+    else:
+        raise ValueError(f"Unknown model: {model_str}. Use 'qwen' or 'llava'")
+
+
 if __name__ == "__main__":
-    print_config()
+    print("\n=== QWEN VL Configuration ===")
+    print_config(ModelType.QWEN_VL)
+    print("\n\n=== LLAVA Configuration ===")
+    print_config(ModelType.LLAVA)
