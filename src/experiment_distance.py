@@ -9,6 +9,15 @@ Generates 4 scatter plots with regression lines.
 """
 
 import os
+import sys
+
+# Add libs to path for dinov2 and ADE20K modules
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+LIBS_DIR = os.path.join(SCRIPT_DIR, 'libs')
+sys.path.insert(0, LIBS_DIR)
+# Also add parent directory for imports
+sys.path.insert(0, os.path.dirname(SCRIPT_DIR))
+
 import numpy as np
 import torch
 import torch.nn.functional as F
