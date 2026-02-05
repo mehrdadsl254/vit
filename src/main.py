@@ -31,6 +31,11 @@ def main(cfg: DictConfig):
     elif cfg.mode == 'eval_all':
         trainer = TrainerCE(cfg, cfg.output_dir)
         trainer.eval_all(cfg)
+    
+    elif cfg.mode == 'experiment_distance':
+        from experiment_distance import DistanceExperiment
+        experiment = DistanceExperiment(cfg)
+        experiment.run()
 
     
 if __name__ == "__main__":

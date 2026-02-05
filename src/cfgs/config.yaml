@@ -56,6 +56,13 @@ result_dir: "/workspaces/003/src/results/"
 #output_dir: ${hydra:runtime.cwd}/../../data/outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}/
 output_dir: ${hydra:runtime.cwd}/../../data/outputs2/${probe.mode}_/layer_${model.num_layer[0]}_probe_${probe.mode}
 
+experiment_distance:
+  num_images: 200
+  num_pairs_per_image: 1000
+  checkpoint_path: "/home/mmd/data/outputs2/quadratic_/layer_18_probe_quadratic/best_checkpoint.pth"
+  layer: 18
+  output_dir: "/home/mmd/VIT/vit-object-binding2/results/distance_experiment/"
+
 hydra:
   run:
     dir: ${output_dir}
