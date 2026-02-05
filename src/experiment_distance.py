@@ -106,7 +106,7 @@ class DistanceExperiment:
     def _load_probe(self):
         """Load trained probe from checkpoint."""
         self.probe = get_model(self.cfg)
-        checkpoint = torch.load(self.checkpoint_path, map_location=self.cfg.device, weights_only=True)
+        checkpoint = torch.load(self.checkpoint_path, map_location=self.cfg.device, weights_only=False)
         self.probe.load_state_dict(checkpoint['model_state_dict'])
         self.probe.eval()
         self.probe.to(self.cfg.device)
