@@ -379,8 +379,8 @@ class DistanceExperiment:
                 )
                 x_line = np.linspace(x_data[diff_mask].min(), x_data[diff_mask].max(), 100)
                 y_line = slope * x_line + intercept
-                ax.plot(x_line, y_line, 'r-', linewidth=2, 
-                       label=f'Different (R²={r_value**2:.3f})')
+                ax.plot(x_line, y_line, color='black', linestyle='--', linewidth=2.5, 
+                       label=f'Different Reg (R²={r_value**2:.3f})')
         
         # Plot same object pairs (blue)
         if same_mask.sum() > 0:
@@ -394,8 +394,8 @@ class DistanceExperiment:
                 )
                 x_line = np.linspace(x_data[same_mask].min(), x_data[same_mask].max(), 100)
                 y_line = slope * x_line + intercept
-                ax.plot(x_line, y_line, 'b-', linewidth=2,
-                       label=f'Same (R²={r_value**2:.3f})')
+                ax.plot(x_line, y_line, color='green', linestyle='--', linewidth=2.5,
+                       label=f'Same Reg (R²={r_value**2:.3f})')
         
         ax.set_xlabel(x_label, fontsize=12)
         ax.set_ylabel(y_label, fontsize=12)
