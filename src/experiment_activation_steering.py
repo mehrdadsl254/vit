@@ -69,19 +69,45 @@ def parse_args():
 # Model loading
 # ---------------------------------------------------------------------------
 
+def resolve_hf_cache_path(model_path: str) -> str:
+    """
+    If model_path looks like a HuggingFace cache directory
+    (e.g. models--Qwen--Qwen2.5-VL-7B-Instruct), resolve it to the
+    actual snapshot directory that contains the model files.
+    """
+    snapshots_dir = os.path.join(model_path, "snapshots")
+    if os.path.isdir(snapshots_dir):
+        # Pick the latest snapshot (usually there's only one)
+        snaps = sorted(os.listdir(snapshots_dir))
+        if snaps:
+            resolved = os.path.join(snapshots_dir, snaps[-1])
+            print(f"  Resolved HF cache path → {resolved}")
+            return resolved
+    return model_path
+
+
 def load_model_and_processor(model_path: str):
     """Load the Qwen2.5-VL model and processor."""
     from transformers import Qwen2_5_VLForConditionalGeneration, AutoProcessor
 
-    print(f"Loading model from {model_path} ...")
+    resolved_path = resolve_hf_cache_path(model_path)
+    is_local = os.path.isdir(resolved_path)
+
+    print(f"Loading model from {resolved_path} ...")
+    print(f"  Local directory: {is_local}")
+
     model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
-        model_path,
-        torch_dtype=torch.bfloat16,
+        resolved_path,
+        dtype=torch.bfloat16,
         device_map="auto",
+        local_files_only=is_local,
     )
     model.eval()
 
-    processor = AutoProcessor.from_pretrained(model_path)
+    processor = AutoProcessor.from_pretrained(
+        resolved_path,
+        local_files_only=is_local,
+    )
     print("Model and processor loaded.")
     return model, processor
 
